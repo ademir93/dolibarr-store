@@ -1035,3 +1035,28 @@ Civility
 IntracommReportList
 PrintTestDesc
 PrintingDriverDesc
+
+# htdocs/custom/mystore/ (MyStore module): keys are defined and correct in
+# htdocs/custom/mystore/langs/*/*.lang, but that directory is outside this
+# script's LANG_DIR (htdocs/langs/en_US/), so they are never seen as
+# "available" and always report as missing. MYSTORE_MYPARAM1 is not a real
+# key: it is example text inside an unindented "//" comment in
+# htdocs/custom/mystore/admin/setup.php that this script's comment-stripping
+# sed does not recognize (it only strips "//" preceded by another char).
+MYSTORE_MYPARAM1
+MyStoreArea
+MyStoreReceiptThanks
+MyStoreRefund
+MyStoreRefundConfirm
+MyStoreRefundDo
+MyStoreRefundDone
+MyStoreRefundDoneNoPayment
+MyStoreRefundErrorNoLines
+MyStoreRefundErrorSourceInvoice
+MyStoreRefundNothingSelected
+MyStoreRefundProduct
+MyStoreRefundQtySold
+MyStoreRefundQtyToReturn
+MyStoreRefundTitle
+MyStoreRefundUnitPrice
+MyStoreSetupPage
