@@ -1,0 +1,105 @@
+# Production compose for csbjeans.com:8080.
+# Deployed to /opt/dolibarr/docker-compose.yml by .github/workflows/deploy.yml.
+# Secrets come from /opt/dolibarr/.env on the server (chmod 600, not in git).
+#
+# Note: unlike the stock example, there is NO named volume on /var/www/html/custom.
+# The mystore module is baked into the image; the deploy runs with
+# --renew-anon-volumes so each release ships the current module code.
+# Modules must be managed via git, not installed through the web UI.
+
+x-dolibarr: &dolibarr
+  image: ${DOLIBARR_IMAGE:-ghcr.io/ademir93/dolibarr-store:latest}
+  deploy:
+    resources:
+      limits:
+        cpus: '1'
+        memory: 512M
+      reservations:
+        cpus: '0.2'
+        memory: 32M
+  volumes:
+    - dolibarr_documents:/var/www/documents
+  restart: unless-stopped
+
+x-dolibarr-env: &dolibarr-env
+  WWW_USER_ID: ${WWW_USER_ID:-33}
+  WWW_GROUP_ID: ${WWW_GROUP_ID:-33}
+  DOLI_DB_HOST: mysql
+  DOLI_DB_NAME: ${DOLI_DB_NAME:-dolidb}
+  DOLI_DB_USER: ${DOLI_DB_USER:-dolidbuser}
+  DOLI_DB_PASSWORD: ${DOLI_DB_PASSWORD}
+  DOLI_URL_ROOT: ${DOLI_URL_ROOT:-http://csbjeans.com:8080}
+  DOLI_ADMIN_LOGIN: ${DOLI_ADMIN_LOGIN:-admin}
+  DOLI_ADMIN_PASSWORD: ${DOLI_ADMIN_PASSWORD}
+  DOLI_INSTANCE_UNIQUE_ID: ${DOLI_INSTANCE_UNIQUE_ID}
+  DOLI_CRON_USER: ${DOLI_ADMIN_LOGIN:-admin}
+  DOLI_CRON_KEY: ${DOLI_CRON_KEY}
+  DOLI_INIT_DEMO: ${DOLI_INIT_DEMO:-0}
+  DOLI_COMPANY_NAME: ${DOLI_COMPANY_NAME:-MyBigCompany}
+
+networks:
+  internal-pod:
+  external-pod:
+
+volumes:
+  dolibarr_mysql:
+  dolibarr_documents:
+
+services:
+  mysql:
+    image: mysql:8.0
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 32M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      start_period: 60s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-dolidb}
+      MYSQL_USER: ${MYSQL_USER:-dolidbuser}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - dolibarr_mysql:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - internal-pod
+
+  app:
+    <<: *dolibarr
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1"]
+      start_period: 300s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      <<: *dolibarr-env
+      DOLI_CRON: 0
+    ports:
+      - "8080:80"
+    networks:
+      - internal-pod
+      - external-pod
+
+  cron:
+    <<: *dolibarr
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      <<: *dolibarr-env
+      DOLI_CRON: 1
+    networks:
+      - internal-pod

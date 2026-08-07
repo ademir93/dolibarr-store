@@ -1,0 +1,8 @@
+# Build context for deploy/Dockerfile: only htdocs/ is needed.
+# Keeps the 1.7G .git dir, dev tooling and docs out of the docker build context.
+*
+!htdocs/
+# Never ship a live config — the container entrypoint generates conf.php from env vars.
+htdocs/conf/conf.php
+htdocs/conf/conf.php.*
+!htdocs/conf/conf.php.example
