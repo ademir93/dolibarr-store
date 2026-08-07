@@ -1,0 +1,48 @@
+# Translation file for MyStore module
+
+#
+# Generic
+#
+ModuleMyStoreName = My Store
+ModuleMyStoreDesc = My Store module description
+
+#
+# Admin page
+#
+MyStoreSetup = My Store setup
+Settings = Settings
+MyStoreSetupPage = My Store setup page
+
+#
+# About page
+#
+About = About
+MyStoreAbout = About My Store
+MyStoreAboutPage = My Store about page
+
+#
+# Index page
+#
+MyStoreArea = Home My Store
+
+#
+# TakePOS refund
+#
+MyStoreRefund = Refund
+MyStoreRefundTitle = Refund items from %s
+MyStoreRefundProduct = Product
+MyStoreRefundUnitPrice = Unit price
+MyStoreRefundQtySold = Sold
+MyStoreRefundQtyToReturn = Return
+MyStoreRefundDo = Refund selected items
+MyStoreRefundNothingSelected = Select at least one quantity to return
+MyStoreRefundConfirm = Refund %s to the customer?
+MyStoreRefundDone = Refund done. Credit note %s created, stock updated, %s returned in cash.
+MyStoreRefundDoneNoPayment = Credit note %s created and stock updated, but no cash payment was recorded (no cash account configured for this terminal).
+MyStoreRefundErrorNoLines = No valid lines to refund
+MyStoreRefundErrorSourceInvoice = Source invoice cannot be refunded
+
+#
+# TakePOS receipt (Epson TM-T20)
+#
+MyStoreReceiptThanks = Thank you for your purchase!

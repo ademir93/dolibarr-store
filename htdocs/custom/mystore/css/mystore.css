@@ -1,0 +1,27 @@
+/*
+ * MyStore module custom styles.
+ *
+ * Hide selected TakePOS action buttons (context: takeposfrontend / index.php).
+ * The core buttons are rendered server-side as <button class="actionbutton" ...>
+ * with an inline onclick handler, but their id ("actionN") is assigned by the
+ * render loop and is not stable, so we target them by their onclick handler.
+ *
+ * Buttons hidden:
+ *   - "New"                -> onclick="New();"
+ *   - "Free-text product"  -> onclick="FreeZone();"
+ *   - "Split sale"         -> onclick="Split();"
+ *   - "Print ticket"       -> onclick varies by printing config:
+ *                             TakeposConnector() / TakeposPrinting() /
+ *                             DolibarrTakeposPrinting() / Print()
+ *
+ * To re-enable a button, delete or comment out its selector below.
+ */
+.actionbutton[onclick*="New("],
+.actionbutton[onclick*="FreeZone("],
+.actionbutton[onclick*="Split("],
+.actionbutton[onclick*="TakeposConnector("],
+.actionbutton[onclick*="TakeposPrinting("],
+.actionbutton[onclick*="DolibarrTakeposPrinting("],
+.actionbutton[onclick*="Print("] {
+	display: none !important;
+}
