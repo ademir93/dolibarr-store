@@ -60,6 +60,9 @@ $clone_categories =  (bool) GETPOST('clone_categories');
 
 $form = new Form($db);
 
+// Initialize a technical object to manage hooks of page. Note that conf->hooks_modules contains an array of hook context
+$hookmanager->initHooks(array('combinationcard'));
+
 $action = GETPOST('action', 'aZ09');
 $massaction = GETPOST('massaction', 'alpha');
 $show_files = GETPOSTINT('show_files');
@@ -157,64 +160,76 @@ if (($action == 'add' || $action == 'create') && $usercancreate && empty($massac
 	//$features = GETPOST('features', 'array');
 	$features = !empty($_SESSION['addvariant_'.$object->id]) ? $_SESSION['addvariant_'.$object->id] : array();
 
-	if (!$features) {
-		if ($action == 'create') {	// Test on permission already done
-			setEventMessages($langs->trans('ErrorFieldsRequired'), null, 'errors');
-		}
-	} else {
-		$reference = trim($reference);
-		if (empty($reference)) {
-			$reference = false;
-		}
-		$weight_impact = price2num($weight_impact);
-		$price_impact = price2num($price_impact);
+	// MYSTORE CUSTOM (see htdocs/custom/mystore/doc/variants-combinations-multi-create.md):
+	// Give modules a chance to handle the "Create all defined combinations" submit.
+	// The MyStore module uses this to create EVERY selected combination (cartesian product),
+	// whereas the legacy core code below only ever creates a single combination.
+	$parameters = array('id' => $id, 'features' => $features);
+	$reshook = $hookmanager->executeHooks('doActions', $parameters, $object, $action); // Note that $action and $object may have been modified by some hooks
+	if ($reshook < 0) {
+		setEventMessages($hookmanager->error, $hookmanager->errors, 'errors');
+	}
 
-		if (!getDolGlobalString('PRODUIT_MULTIPRICES') && !getDolGlobalString('PRODUIT_CUSTOMER_PRICES_AND_MULTIPRICES')) {
-			$level_price_impact = array(1 => $price_impact);
-			$level_price_impact_percent = array(1 => $price_impact_percent);
-		}
-
-		$sanit_features = array();
-
-		//First, sanitize
-		foreach ($features as $feature) {
-			$explode = explode('-', $feature);
-			if ($prodattr->fetch((int) $explode[0]) <= 0 || $prodattr_val->fetch((int) $explode[1]) <= 0) {
-				continue;
-			}
-
-			// Valuepair
-			$sanit_features[(int) $explode[0]] = (int) $explode[1];
-
-			$tmp = new ProductCombination2ValuePair($db);
-			$tmp->fk_prod_attr = (int) $explode[0];
-			$tmp->fk_prod_attr_val = (int) $explode[1];
-
-			$productCombination2ValuePairs1[] = $tmp;
-		}
-
-		$db->begin();
-
-		// sanit_feature is an array with 1 (and only 1) value per attribute.
-		// For example:  Color->blue, Size->Small, Option->2
-		if (!$prodcomb->fetchByProductCombination2ValuePairs($id, $sanit_features)) {
-			$result = $prodcomb->createProductCombination($user, $object, $sanit_features, array(), $level_price_impact_percent, $level_price_impact, (float) $weight_impact, $reference, '', $clone_categories);
-			if ($result > 0) {
-				setEventMessages($langs->trans('RecordSaved'), null, 'mesgs');
-				unset($_SESSION['addvariant_'.$object->id]);
-
-				$db->commit();
-				header('Location: '.dol_buildpath('/variants/combinations.php?id='.$id, 2));
-				exit();
-			} else {
-				$langs->load("errors");
-				setEventMessages($prodcomb->error, $prodcomb->errors, 'errors');
+	if (empty($reshook)) {
+		if (!$features) {
+			if ($action == 'create') {	// Test on permission already done
+				setEventMessages($langs->trans('ErrorFieldsRequired'), null, 'errors');
 			}
 		} else {
-			setEventMessages($langs->trans('ErrorRecordAlreadyExists'), null, 'errors');
-		}
+			$reference = trim($reference);
+			if (empty($reference)) {
+				$reference = false;
+			}
+			$weight_impact = price2num($weight_impact);
+			$price_impact = price2num($price_impact);
 
-		$db->rollback();
+			if (!getDolGlobalString('PRODUIT_MULTIPRICES') && !getDolGlobalString('PRODUIT_CUSTOMER_PRICES_AND_MULTIPRICES')) {
+				$level_price_impact = array(1 => $price_impact);
+				$level_price_impact_percent = array(1 => $price_impact_percent);
+			}
+
+			$sanit_features = array();
+
+			//First, sanitize
+			foreach ($features as $feature) {
+				$explode = explode('-', $feature);
+				if ($prodattr->fetch((int) $explode[0]) <= 0 || $prodattr_val->fetch((int) $explode[1]) <= 0) {
+					continue;
+				}
+
+				// Valuepair
+				$sanit_features[(int) $explode[0]] = (int) $explode[1];
+
+				$tmp = new ProductCombination2ValuePair($db);
+				$tmp->fk_prod_attr = (int) $explode[0];
+				$tmp->fk_prod_attr_val = (int) $explode[1];
+
+				$productCombination2ValuePairs1[] = $tmp;
+			}
+
+			$db->begin();
+
+			// sanit_feature is an array with 1 (and only 1) value per attribute.
+			// For example:  Color->blue, Size->Small, Option->2
+			if (!$prodcomb->fetchByProductCombination2ValuePairs($id, $sanit_features)) {
+				$result = $prodcomb->createProductCombination($user, $object, $sanit_features, array(), $level_price_impact_percent, $level_price_impact, (float) $weight_impact, $reference, '', $clone_categories);
+				if ($result > 0) {
+					setEventMessages($langs->trans('RecordSaved'), null, 'mesgs');
+					unset($_SESSION['addvariant_'.$object->id]);
+
+					$db->commit();
+					header('Location: '.dol_buildpath('/variants/combinations.php?id='.$id, 2));
+					exit();
+				} else {
+					$langs->load("errors");
+					setEventMessages($prodcomb->error, $prodcomb->errors, 'errors');
+				}
+			} else {
+				setEventMessages($langs->trans('ErrorRecordAlreadyExists'), null, 'errors');
+			}
+
+			$db->rollback();
+		}
 	}
 } elseif (!empty($massaction)) {
 	$bulkaction = $massaction;
