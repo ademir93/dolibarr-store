@@ -89,7 +89,7 @@ class modMyStore extends DolibarrModules
 			'theme'             => 0,
 			'css'               => array('/mystore/css/mystore.css'),
 			'js'                => array(),
-			'hooks'             => array('takeposinvoice', 'takeposfrontend', 'login', 'main', 'combinationcard'),
+			'hooks'             => array('takeposinvoice', 'takeposfrontend', 'login', 'main', 'combinationcard', 'invoicelist', 'poslist'),
 			'moduleforexternal' => 0,
 			'websitetemplates'  => 0,
 			'captcha'           => 0,
@@ -142,6 +142,13 @@ class modMyStore extends DolibarrModules
 		// Permissions
 		$this->rights = array();
 		$r = 0;
+
+		$r++;
+		$this->rights[$r][0] = 500101;
+		$this->rights[$r][1] = 'See TakePOS sales history (invoices of own terminal warehouse only)';
+		$this->rights[$r][2] = 'a';
+		$this->rights[$r][3] = 0;
+		$this->rights[$r][4] = 'poshistory';
 
 		// Main menu entries
 		$this->menu = array();
