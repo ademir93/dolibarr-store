@@ -135,10 +135,12 @@ repos:
     hooks:
       - id: php-cbf
         files: \.(php)$
+        exclude: |
+          (?x)^(htdocs/(includes|custom)/.*)$
         args: [--standard=dev/setup/codesniffer/ruleset.xml]
       - id: php-cs
         exclude: |
-          (?x)^(htdocs/includes/.*)$
+          (?x)^(htdocs/(includes|custom)/.*)$
         files: \.(php)$
         args:
           [
