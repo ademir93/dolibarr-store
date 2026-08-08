@@ -154,6 +154,59 @@ class ActionsMystore
 	}
 
 	/**
+	 * printFieldListWhere hook (contexts 'invoicelist' and 'poslist', fired while
+	 * compta/facture/list.php and the TakePOS sales-history popup build the invoice
+	 * list SQL).
+	 *
+	 * For users holding the mystore->poshistory permission (and who are not
+	 * administrators, who already see everything), restricts the invoice list to
+	 * TakePOS sales (module_source = 'takepos') and further narrows it to the
+	 * terminal(s) whose configured warehouse (CASHDESK_ID_WAREHOUSEn) matches the
+	 * user's own default warehouse. Everyone else is left untouched.
+	 *
+	 * @param array<string,mixed>	$parameters		Hook metadata (context, etc...)
+	 * @param CommonObject|string	$object			Current object (unused)
+	 * @param string				$action			Current action
+	 * @param HookManager			$hookmanager	Hook manager
+	 * @return int									0 = OK ($this->resprints holds the extra SQL condition)
+	 */
+	public function printFieldListWhere($parameters, &$object, &$action, $hookmanager)
+	{
+		global $user;
+
+		$contexts = explode(':', (string) ($parameters['context'] ?? ''));
+		if (!in_array('invoicelist', $contexts) && !in_array('poslist', $contexts)) {
+			return 0;
+		}
+		if (empty($user) || !empty($user->admin)) {
+			return 0;
+		}
+		if (!$user->hasRight('mystore', 'poshistory')) {
+			return 0;
+		}
+
+		// Scope invoice lists to TakePOS sales; f is the llx_facture alias in compta/facture/list.php
+		$where = " AND f.module_source = 'takepos'";
+
+		// Limit to terminals whose configured warehouse matches the user's default warehouse
+		if (!empty($user->fk_warehouse)) {
+			$terminals = array();
+			$numterminals = max(1, getDolGlobalInt('TAKEPOS_NUM_TERMINALS'));
+			for ($i = 1; $i <= $numterminals; $i++) {
+				if (getDolGlobalInt('CASHDESK_ID_WAREHOUSE'.$i) == (int) $user->fk_warehouse) {
+					$terminals[] = "'".$this->db->escape((string) $i)."'";
+				}
+			}
+			if (count($terminals) > 0) {
+				$where .= " AND f.pos_source IN (".implode(',', $terminals).")";
+			}
+		}
+
+		$this->resprints = $where;
+		return 0;
+	}
+
+	/**
 	 * afterLogin hook (context 'login', fired once from main.inc.php right after a
 	 * successful authentication, before the MAIN_LANDING_PAGE redirect block).
 	 *
