@@ -215,4 +215,179 @@ class NopCommerceCaptureTest extends CommonClassTest
 
 		NopCommerceCapture::forget();
 	}
+
+	/**
+	 * A native transfer between the configured warehouses is captured as one pending
+	 * transfer holding one line, with both stock movements recorded and tagged.
+	 *
+	 * This drives the real seam: it performs the same two stock corrections product.php
+	 * performs and lets Dolibarr's own trigger dispatch fire.
+	 *
+	 * @return void
+	 */
+	public function testNativeTransferIsCaptured()
+	{
+		global $conf, $db, $user;
+		$db = $this->savdb;
+
+		$source = $this->makeWarehouse('cap-src');
+		$dest = $this->makeWarehouse('cap-dst');
+		$product = $this->makeProduct('cap');
+
+		$conf->global->NOPCOMMERCE_SOURCE_WAREHOUSE_ID = $source;
+		$conf->global->NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID = $dest;
+
+		// Seed the source warehouse. No intent is parked yet, so this must not be captured.
+		$this->assertGreaterThan(0, $product->correct_stock($user, $source, 10, 0, 'phpunit seed', 0, 'PHPUNITSEED'), 'Failed to seed stock');
+
+		NopCommerceCapture::forget();
+		NopCommerceCapture::expect($product->id, $source, $dest);
+
+		// The two legs, in the order product.php performs them.
+		$this->assertGreaterThan(0, $product->correct_stock($user, $source, 3, 1, 'phpunit transfer', 0, 'PHPUNITXFER'), 'Outbound leg failed');
+		$this->assertGreaterThan(0, $product->correct_stock($user, $dest, 3, 0, 'phpunit transfer', 0, 'PHPUNITXFER'), 'Inbound leg failed');
+
+		$sql = "SELECT rowid, ref, status, origin, sync_flag, fk_warehouse_source, fk_warehouse_destination";
+		$sql .= " FROM ".MAIN_DB_PREFIX."nopcommerce_transfer";
+		$sql .= " WHERE fk_warehouse_destination = ".((int) $dest);
+		$resql = $db->query($sql);
+		$this->assertNotFalse($resql, 'Query failed: '.$db->lasterror());
+		$this->assertSame(1, (int) $db->num_rows($resql), 'Exactly one transfer must be captured');
+
+		$obj = $db->fetch_object($resql);
+		$this->assertSame(NopCommerceTransfer::ORIGIN_NATIVE, $obj->origin, 'The transfer must be marked as captured');
+		$this->assertSame(NopCommerceTransfer::STATUS_PENDING, (int) $obj->status, 'The transfer must be pending, ready to pull');
+		$this->assertSame(0, (int) $obj->sync_flag, 'A freshly captured transfer is not synced');
+		$this->assertSame($source, (int) $obj->fk_warehouse_source, 'The source must be the warehouse the stock left');
+		$this->assertStringStartsWith('NOP-M', $obj->ref, 'The ref must be derived from the movement id');
+
+		$sql = "SELECT fk_product, qty, fk_mouvement_source, fk_mouvement_destination, sync_flag";
+		$sql .= " FROM ".MAIN_DB_PREFIX."nopcommerce_transferline";
+		$sql .= " WHERE fk_nopcommercetransfer = ".((int) $obj->rowid);
+		$resql = $db->query($sql);
+		$this->assertNotFalse($resql, 'Query failed: '.$db->lasterror());
+		$this->assertSame(1, (int) $db->num_rows($resql), 'Exactly one line must be captured');
+
+		$line = $db->fetch_object($resql);
+		$this->assertSame((int) $product->id, (int) $line->fk_product, 'The line must carry the transferred product');
+		$this->assertEquals(3.0, (float) $line->qty, 'The line must carry the transferred quantity');
+		$this->assertGreaterThan(0, (int) $line->fk_mouvement_source, 'The outbound movement must be recorded');
+		$this->assertGreaterThan(0, (int) $line->fk_mouvement_destination, 'The inbound movement must be recorded');
+
+		// Both movements must point back at the transfer so the movement list can link to it.
+		$sql = "SELECT COUNT(*) as nb FROM ".MAIN_DB_PREFIX."stock_mouvement";
+		$sql .= " WHERE rowid IN (".((int) $line->fk_mouvement_source).", ".((int) $line->fk_mouvement_destination).")";
+		$sql .= " AND origintype = '".$db->escape(NopCommerceTransfer::ORIGIN_TYPE)."'";
+		$sql .= " AND fk_origin = ".((int) $obj->rowid);
+		$resql = $db->query($sql);
+		$this->assertNotFalse($resql, 'Query failed: '.$db->lasterror());
+		$this->assertSame(2, (int) $db->fetch_object($resql)->nb, 'Both movements must be tagged with the transfer');
+
+		$this->assertFalse(NopCommerceCapture::isExpected(), 'The intent must be forgotten after a capture');
+	}
+
+	/**
+	 * A transfer between warehouses that are not the configured pair is left alone.
+	 *
+	 * @return void
+	 */
+	public function testNonMatchingWarehousePairIsNotCaptured()
+	{
+		global $conf, $db, $user;
+		$db = $this->savdb;
+
+		$source = $this->makeWarehouse('nm-src');
+		$dest = $this->makeWarehouse('nm-dst');
+		$other = $this->makeWarehouse('nm-oth');
+		$product = $this->makeProduct('nm');
+
+		$conf->global->NOPCOMMERCE_SOURCE_WAREHOUSE_ID = $source;
+		$conf->global->NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID = $dest;
+
+		$this->assertGreaterThan(0, $product->correct_stock($user, $source, 10, 0, 'phpunit seed', 0, 'PHPUNITSEED'), 'Failed to seed stock');
+
+		// No intent: this is what a transfer to an unrelated warehouse looks like.
+		NopCommerceCapture::forget();
+
+		$this->assertGreaterThan(0, $product->correct_stock($user, $source, 2, 1, 'phpunit other', 0, 'PHPUNITOTHER'), 'Outbound leg failed');
+		$this->assertGreaterThan(0, $product->correct_stock($user, $other, 2, 0, 'phpunit other', 0, 'PHPUNITOTHER'), 'Inbound leg failed');
+
+		$sql = "SELECT COUNT(*) as nb FROM ".MAIN_DB_PREFIX."nopcommerce_transfer";
+		$sql .= " WHERE fk_warehouse_destination IN (".((int) $dest).", ".((int) $other).")";
+		$resql = $db->query($sql);
+		$this->assertNotFalse($resql, 'Query failed: '.$db->lasterror());
+		$this->assertSame(0, (int) $db->fetch_object($resql)->nb, 'Nothing must be captured without a matching pair');
+	}
+
+	/**
+	 * When the stock leaves a warehouse other than the configured source, nothing is
+	 * captured even though an intent was parked, and the stock still moves.
+	 *
+	 * @return void
+	 */
+	public function testOutboundLegFromAnotherWarehouseIsNotCaptured()
+	{
+		global $conf, $db, $user;
+		$db = $this->savdb;
+
+		$source = $this->makeWarehouse('fs-src');
+		$dest = $this->makeWarehouse('fs-dst');
+		$foreign = $this->makeWarehouse('fs-for');
+		$product = $this->makeProduct('fs');
+
+		$conf->global->NOPCOMMERCE_SOURCE_WAREHOUSE_ID = $source;
+		$conf->global->NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID = $dest;
+
+		$this->assertGreaterThan(0, $product->correct_stock($user, $foreign, 10, 0, 'phpunit seed', 0, 'PHPUNITSEED'), 'Failed to seed stock');
+
+		NopCommerceCapture::forget();
+		NopCommerceCapture::expect($product->id, $source, $dest);
+
+		// The lot-specific form's hole: the gate passed, but the stock leaves elsewhere.
+		$this->assertGreaterThan(0, $product->correct_stock($user, $foreign, 4, 1, 'phpunit foreign', 0, 'PHPUNITFOR'), 'Outbound leg failed');
+		$this->assertGreaterThan(0, $product->correct_stock($user, $dest, 4, 0, 'phpunit foreign', 0, 'PHPUNITFOR'), 'Inbound leg failed');
+
+		$sql = "SELECT COUNT(*) as nb FROM ".MAIN_DB_PREFIX."nopcommerce_transfer";
+		$sql .= " WHERE fk_warehouse_destination = ".((int) $dest);
+		$resql = $db->query($sql);
+		$this->assertNotFalse($resql, 'Query failed: '.$db->lasterror());
+		$this->assertSame(0, (int) $db->fetch_object($resql)->nb, 'A foreign source must not be captured');
+	}
+
+	/**
+	 * A capture failure is reported as a negative result so the caller rolls back.
+	 *
+	 * This is the module's whole responsibility for atomicity. The actual rollback is
+	 * product.php's outermost transaction and cannot be observed here, because Dolibarr's
+	 * nested transactions are a counter rather than savepoints and this harness owns the
+	 * outermost transaction. Verify the rollback by hand on the native page.
+	 *
+	 * @return void
+	 */
+	public function testCaptureFailurePropagates()
+	{
+		global $db, $user;
+		$db = $this->savdb;
+
+		$dest = $this->makeWarehouse('cf-dst');
+
+		NopCommerceCapture::forget();
+		// An intent whose source equals the destination: create() refuses such a transfer.
+		NopCommerceCapture::expect(1, $dest, $dest);
+
+		$movement = new MouvementStock($db);
+		$movement->id = 777001;
+		$movement->entrepot_id = $dest;
+		$this->assertGreaterThan(0, NopCommerceCapture::recordSourceLeg($movement), 'Source leg should be accepted');
+
+		$movement->product_id = 1;
+		$movement->qty = 1;
+		$movement->batch = '';
+		$movement->label = 'phpunit failure';
+
+		$this->assertLessThan(0, NopCommerceCapture::capture($db, $user, $movement), 'capture() must report failure so the caller rolls back');
+		$this->assertNotSame('', NopCommerceCapture::$error, 'capture() must explain why it failed');
+
+		NopCommerceCapture::forget();
+	}
 }

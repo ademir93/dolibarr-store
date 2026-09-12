@@ -96,3 +96,4 @@ CannotDeleteASyncedTransfer = A transfer already confirmed by nopCommerce cannot
 CannotCancelASyncedTransfer = A transfer already confirmed by nopCommerce cannot be canceled
 CannotReopenASyncedTransfer = A transfer already confirmed by nopCommerce cannot be sent back to draft
 FailedToBuildTheNextRef = Failed to build the next reference
+NopCommerceCaptureFailed = The product could not be queued for nopCommerce, so the stock transfer was not made: %s

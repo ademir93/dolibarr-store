@@ -79,7 +79,7 @@ class modNopCommerce extends DolibarrModules
 
 		// Define features supported by module
 		$this->module_parts = array(
-			'triggers'          => 0,
+			'triggers'          => 1,
 			'login'             => 0,
 			'substitutions'     => 0,
 			'menus'             => 0,

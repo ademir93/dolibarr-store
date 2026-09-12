@@ -155,4 +155,107 @@ class NopCommerceCapture
 
 		return 1;
 	}
+
+	/**
+	 * Record the transferred product as a pending sync transfer.
+	 *
+	 * Reuses the ordinary create/addLine/validate path so captured and manual transfers
+	 * are built by the same code. The ref is derived from the destination movement id
+	 * rather than the sequential counter: the counter reads the highest existing ref and
+	 * increments it, so two simultaneous transfers compute the same ref and the loser's
+	 * stock transfer would fail for a reason unrelated to anything that user did.
+	 *
+	 * @param	DoliDB			$db		Database handler
+	 * @param	User			$user	User performing the stock transfer
+	 * @param	MouvementStock	$m		The inbound movement, into the webshop warehouse
+	 * @return	int<-1,max>				Id of the captured transfer, or <0 on failure
+	 */
+	public static function capture(DoliDB $db, User $user, MouvementStock $m)
+	{
+		if (self::$intent === null) {
+			self::$error = 'No capture was expected';
+			return -1;
+		}
+		if (empty(self::$sourcemovementid)) {
+			self::$error = 'The outbound stock movement was never seen';
+			return -1;
+		}
+
+		$transfer = new NopCommerceTransfer($db);
+		$transfer->label = (string) $m->label;
+		$transfer->fk_warehouse_source = self::expectedSource();
+		$transfer->fk_warehouse_destination = (int) $m->entrepot_id;
+
+		if ($transfer->create($user) <= 0) {
+			self::$error = 'Failed to create the transfer: '.$transfer->error;
+			return -1;
+		}
+
+		$lineid = $transfer->addLine($user, (int) $m->product_id, abs((float) $m->qty), (string) $m->batch);
+		if ($lineid <= 0) {
+			self::$error = 'Failed to add the product: '.$transfer->error;
+			return -1;
+		}
+
+		// Record which stock movements this line is the bookkeeping for. applyAckSuccess
+		// leaves these alone for a captured transfer instead of creating its own.
+		$line = new NopCommerceTransferLine($db);
+		if ($line->fetch($lineid) <= 0) {
+			self::$error = 'Failed to reload the line: '.$line->error;
+			return -1;
+		}
+		$line->fk_mouvement_source = self::sourceMovementId();
+		$line->fk_mouvement_destination = (int) $m->id;
+		if ($line->update($user) < 0) {
+			self::$error = 'Failed to record the stock movements on the line: '.$line->error;
+			return -1;
+		}
+
+		$transfer->origin = NopCommerceTransfer::ORIGIN_NATIVE;
+		if ($transfer->update($user) < 0) {
+			self::$error = 'Failed to mark the transfer as captured: '.$transfer->error;
+			return -1;
+		}
+
+		if ($transfer->validate($user, 0, 'NOP-M'.((int) $m->id)) <= 0) {
+			self::$error = 'Failed to validate the transfer: '.$transfer->error;
+			return -1;
+		}
+
+		if (self::tagMovements($db, (int) $transfer->id, self::sourceMovementId(), (int) $m->id) < 0) {
+			return -1;
+		}
+
+		return (int) $transfer->id;
+	}
+
+	/**
+	 * Point both stock movements back at the transfer they belong to, so the stock
+	 * movement list can resolve and link them.
+	 *
+	 * Only rows with no provenance are touched, so an existing one is never overwritten.
+	 * The test has to accept 0 as well as NULL because MouvementStock::_create() writes
+	 * 0 and '' rather than nulls when no origin was given.
+	 *
+	 * @param	DoliDB	$db					Database handler
+	 * @param	int		$transferid			Transfer the movements belong to
+	 * @param	int		$sourcemovementid	Outbound movement row id
+	 * @param	int		$destmovementid		Inbound movement row id
+	 * @return	int<-1,1>					<0 if KO, >0 if OK
+	 */
+	protected static function tagMovements(DoliDB $db, $transferid, $sourcemovementid, $destmovementid)
+	{
+		$sql = "UPDATE ".$db->prefix()."stock_mouvement";
+		$sql .= " SET fk_origin = ".((int) $transferid).",";
+		$sql .= " origintype = '".$db->escape(NopCommerceTransfer::ORIGIN_TYPE)."'";
+		$sql .= " WHERE rowid IN (".((int) $sourcemovementid).", ".((int) $destmovementid).")";
+		$sql .= " AND (fk_origin IS NULL OR fk_origin = 0)";
+
+		if (!$db->query($sql)) {
+			self::$error = 'Failed to tag the stock movements: '.$db->lasterror();
+			return -1;
+		}
+
+		return 1;
+	}
 }
