@@ -24,6 +24,7 @@ CREATE TABLE llx_nopcommerce_transfer(
 	fk_warehouse_destination integer NOT NULL,                 -- webshop warehouse, incremented on ack success
 	status                   smallint NOT NULL DEFAULT 0,      -- 0=draft 1=pending 2=synced 3=failed 9=canceled
 	sync_flag                smallint NOT NULL DEFAULT 0,      -- 0=not synced with nopCommerce, 1=synced
+	origin                   varchar(16) NOT NULL DEFAULT 'manual', -- 'manual'=built by hand (legacy), 'native'=captured from a stock transfer
 	sync_attempts            integer NOT NULL DEFAULT 0,
 	sync_last_error          text,
 	pull_token               varchar(64) DEFAULT NULL,         -- issued on each pull, required by the ack call

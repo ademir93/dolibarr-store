@@ -101,6 +101,16 @@ class NopCommerceTransfer extends CommonObject
 	const STATUS_FAILED = 3;
 	const STATUS_CANCELED = 9;
 
+	const ORIGIN_MANUAL = 'manual';
+	const ORIGIN_NATIVE = 'native';
+
+	/**
+	 * Value written to llx_stock_mouvement.origintype so the stock movement list can
+	 * resolve a movement back to its transfer. The part before the "@" must match the
+	 * class file name on disk, the part after it the module directory.
+	 */
+	const ORIGIN_TYPE = 'nopcommercetransfer@nopcommerce';
+
 	/**
 	 * @inheritdoc
 	 * @var array<string,array<string,mixed>>
@@ -113,6 +123,7 @@ class NopCommerceTransfer extends CommonObject
 		'fk_warehouse_source' => array('type' => 'integer:Entrepot:product/stock/class/entrepot.class.php', 'label' => 'NopCommerceSourceWarehouse', 'picto' => 'stock', 'enabled' => 1, 'position' => 40, 'notnull' => 1, 'visible' => 1, 'index' => 1, 'csslist' => 'tdoverflowmax150'),
 		'fk_warehouse_destination' => array('type' => 'integer:Entrepot:product/stock/class/entrepot.class.php', 'label' => 'NopCommerceWebshopWarehouse', 'picto' => 'stock', 'enabled' => 1, 'position' => 41, 'notnull' => 1, 'visible' => 1, 'index' => 1, 'csslist' => 'tdoverflowmax150'),
 		'sync_flag' => array('type' => 'integer', 'label' => 'NopCommerceSyncFlag', 'enabled' => 1, 'position' => 50, 'notnull' => 1, 'visible' => 1, 'default' => '0', 'noteditable' => 1, 'index' => 1, 'arrayofkeyval' => array(0 => 'NopCommerceSyncFalse', 1 => 'NopCommerceSyncTrue')),
+		'origin' => array('type' => 'varchar(16)', 'label' => 'NopCommerceOrigin', 'enabled' => 1, 'position' => 49, 'notnull' => 1, 'visible' => 0, 'noteditable' => 1, 'default' => 'manual'),
 		'sync_attempts' => array('type' => 'integer', 'label' => 'NopCommerceSyncAttempts', 'enabled' => 1, 'position' => 51, 'notnull' => 1, 'visible' => -1, 'default' => '0', 'noteditable' => 1),
 		'sync_last_error' => array('type' => 'text', 'label' => 'NopCommerceSyncLastError', 'enabled' => 1, 'position' => 52, 'notnull' => 0, 'visible' => -1, 'noteditable' => 1, 'cssview' => 'wordbreak'),
 		'pull_token' => array('type' => 'varchar(64)', 'label' => 'NopCommercePullToken', 'enabled' => 1, 'position' => 53, 'notnull' => 0, 'visible' => 0, 'noteditable' => 1),
@@ -156,6 +167,11 @@ class NopCommerceTransfer extends CommonObject
 	 * @var int 0 = not synced with nopCommerce, 1 = synced
 	 */
 	public $sync_flag;
+	/**
+	 * @var string self::ORIGIN_MANUAL when built by hand, self::ORIGIN_NATIVE when captured
+	 *             from a native stock transfer. Drives stockAlreadyMoved().
+	 */
+	public $origin = self::ORIGIN_MANUAL;
 	/**
 	 * @var int Number of acknowledgements received so far
 	 */
@@ -567,6 +583,21 @@ class NopCommerceTransfer extends CommonObject
 	public function isPullable()
 	{
 		return in_array((int) $this->status, array(self::STATUS_PENDING, self::STATUS_FAILED), true);
+	}
+
+	/**
+	 * Return true when this transfer's stock was already moved outside the sync.
+	 *
+	 * A captured transfer moves its stock on the native stock transfer page, before
+	 * nopCommerce ever sees it, so the acknowledgement must not move it a second time.
+	 * Derived from the origin rather than stored, so a further capture source needs no
+	 * schema change.
+	 *
+	 * @return bool	True when the stock has already moved
+	 */
+	public function stockAlreadyMoved()
+	{
+		return $this->origin !== self::ORIGIN_MANUAL;
 	}
 
 	/**
