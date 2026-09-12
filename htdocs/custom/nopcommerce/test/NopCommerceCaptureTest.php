@@ -30,6 +30,7 @@ require_once dirname(__FILE__).'/../../../product/stock/class/mouvementstock.cla
 require_once dirname(__FILE__).'/../../../../test/phpunit/CommonClassTest.class.php';
 require_once dirname(__FILE__).'/../class/nopcommercetransfer.class.php';
 require_once dirname(__FILE__).'/../class/nopcommercetransferline.class.php';
+require_once dirname(__FILE__).'/../class/nopcommercecapture.class.php';
 
 if (empty($user->id)) {
 	$user->fetch(1);
@@ -153,5 +154,65 @@ class NopCommerceCaptureTest extends CommonClassTest
 	public function testSetDraftNoLongerExists()
 	{
 		$this->assertFalse(method_exists('NopCommerceTransfer', 'setDraft'), 'setDraft must be deleted, not guarded');
+	}
+
+	/**
+	 * No intent is parked unless the hook parks one.
+	 *
+	 * @return void
+	 */
+	public function testNoIntentByDefault()
+	{
+		NopCommerceCapture::forget();
+
+		$this->assertFalse(NopCommerceCapture::isExpected(), 'Nothing must be captured without an intent');
+	}
+
+	/**
+	 * The intent carries what the hook saw on the submitted form.
+	 *
+	 * @return void
+	 */
+	public function testIntentCarriesWhatTheHookSaw()
+	{
+		NopCommerceCapture::forget();
+		NopCommerceCapture::expect(11, 22, 33);
+
+		$this->assertTrue(NopCommerceCapture::isExpected());
+		$this->assertSame(11, NopCommerceCapture::expectedProduct());
+		$this->assertSame(22, NopCommerceCapture::expectedSource());
+		$this->assertSame(33, NopCommerceCapture::expectedDestination());
+
+		NopCommerceCapture::forget();
+		$this->assertFalse(NopCommerceCapture::isExpected(), 'forget() must clear the intent');
+	}
+
+	/**
+	 * The outbound leg is accepted only when the stock really left the configured source.
+	 *
+	 * The hook's own check reads the submitted id_entrepot, which the lot-specific form
+	 * ignores in favour of the lot's warehouse, so the real enforcement is here.
+	 *
+	 * @return void
+	 */
+	public function testSourceLegFromAForeignWarehouseIsRejected()
+	{
+		global $db;
+		$db = $this->savdb;
+
+		NopCommerceCapture::forget();
+		NopCommerceCapture::expect(11, 22, 33);
+
+		$movement = new MouvementStock($db);
+		$movement->id = 4242;
+		$movement->entrepot_id = 99;
+
+		$this->assertLessThan(0, NopCommerceCapture::recordSourceLeg($movement), 'A leg from warehouse 99 must be refused when 22 is configured');
+
+		$movement->entrepot_id = 22;
+		$this->assertGreaterThan(0, NopCommerceCapture::recordSourceLeg($movement), 'A leg from the configured source must be accepted');
+		$this->assertSame(4242, NopCommerceCapture::sourceMovementId());
+
+		NopCommerceCapture::forget();
 	}
 }
