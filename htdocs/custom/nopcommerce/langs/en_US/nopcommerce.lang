@@ -17,7 +17,7 @@
 ModuleNopCommerceName = nopCommerce integration
 ModuleNopCommerceDesc = Product synchronisation between Dolibarr and a nopCommerce webshop
 NopCommerceDescription = Product synchronisation with a nopCommerce webshop
-NopCommerceDescriptionLong = Products move from a parent warehouse to a dedicated webshop warehouse through a transfer. nopCommerce polls this module for the transfers that are waiting, records the products on its side, then reports the result. Stock only moves once nopCommerce confirms.
+NopCommerceDescriptionLong = Transferring a product's stock from the source warehouse into the webshop warehouse queues it for the webshop. nopCommerce polls this module for the products that are waiting, records them on its side, then reports the result. The stock moves when the transfer is made, so confirming a product does not move it again.
 NopCommerceSetup = nopCommerce integration setup
 NopCommerceSetupPage = Setup of the nopCommerce integration
 NopCommerceAbout = About nopCommerce integration
@@ -25,9 +25,9 @@ NopCommerceAboutPage = nopCommerce integration about page
 
 # Setup
 NopCommerceWebshopWarehouseId = Webshop warehouse
-NopCommerceWebshopWarehouseIdTooltip = The warehouse that holds the stock published on the nopCommerce webshop. It is the default destination of a transfer and the default filter of the pull endpoint.
-NopCommerceSourceWarehouseId = Default source warehouse
-NopCommerceSourceWarehouseIdTooltip = The parent warehouse a transfer takes its stock from. Only a default, it can be changed on each transfer.
+NopCommerceWebshopWarehouseIdTooltip = The warehouse that holds the stock published on the nopCommerce webshop. A stock transfer into this warehouse from the source warehouse above queues the product for sync.
+NopCommerceSourceWarehouseId = Source warehouse
+NopCommerceSourceWarehouseIdTooltip = The warehouse stock is transferred from. A stock transfer is queued for nopCommerce only when it runs from this warehouse to the webshop warehouse below.
 NopCommerceAckRequireToken = Require the pull token on acknowledgement
 NopCommerceAckRequireTokenTooltip = When enabled, nopCommerce has to send back the pull_token it received with the transfer. This stops a stale acknowledgement from being applied. Disable it only while testing.
 NopCommercePullLimit = Default number of transfers per pull
@@ -54,6 +54,10 @@ NopCommerceProductId = nopCommerce product id
 NopCommerceCombinationId = nopCommerce combination id
 NopCommerceMovementSource = Source stock movement
 NopCommerceMovementDestination = Destination stock movement
+NopCommerceSyncProducts = Products for nopCommerce sync
+NopCommerceOrigin = Queued from
+NopCommerceOriginManual = Built by hand
+NopCommerceOriginNative = Stock transfer
 
 # Statuses
 NopCommerceStatusPending = Waiting for nopCommerce
@@ -65,11 +69,8 @@ NopCommerceValidateTransfer = Validate
 NopCommerceConfirmValidateTransfer = Validate transfer %s? It becomes visible to nopCommerce. No stock moves until nopCommerce confirms it.
 NopCommerceCancelTransfer = Cancel
 NopCommerceConfirmCancelTransfer = Cancel transfer %s?
-NopCommerceSetDraftTransfer = Back to draft
-NopCommerceConfirmSetDraftTransfer = Send transfer %s back to draft?
 NopCommerceDeleteTransfer = Delete
 NopCommerceConfirmDeleteTransfer = Delete transfer %s?
-NopCommerceAddProduct = Add product
 NopCommerceDeleteLine = Delete line
 NopCommerceConfirmDeleteLine = Delete this line?
 
@@ -78,12 +79,11 @@ NopCommerceMovementLabel = nopCommerce sync %s
 NopCommerceNotEnoughStock = Product id %s has only %s in the source warehouse, the transfer needs %s
 NopCommerceTransferValidated = Transfer validated, nopCommerce can now pull it
 NopCommerceTransferCanceled = Transfer canceled
-NopCommerceTransferSetToDraft = Transfer sent back to draft
-NopCommerceLineAdded = Product added to the transfer
 NopCommerceLineDeleted = Line deleted
 NopCommerceNoLineYet = No product on this transfer yet
 NopCommerceApiEndpoints = API endpoints for the nopCommerce plugin
 NopCommerceApiHint = Give the nopCommerce plugin a Dolibarr user whose API key is set and who holds the permission "Use the nopCommerce sync API".
+NopCommerceNoProductQueued = No product is queued for nopCommerce yet. Products are queued by transferring their stock into the webshop warehouse.
 
 # Errors
 BothWarehousesAreRequired = Both the source warehouse and the webshop warehouse are required
@@ -94,6 +94,5 @@ ATransferNeedsAtLeastOneLine = Add at least one product before validating
 QuantityMustBePositive = The quantity has to be greater than zero
 CannotDeleteASyncedTransfer = A transfer already confirmed by nopCommerce cannot be deleted
 CannotCancelASyncedTransfer = A transfer already confirmed by nopCommerce cannot be canceled
-CannotReopenASyncedTransfer = A transfer already confirmed by nopCommerce cannot be sent back to draft
 FailedToBuildTheNextRef = Failed to build the next reference
 NopCommerceCaptureFailed = The product could not be queued for nopCommerce, so the stock transfer was not made: %s
