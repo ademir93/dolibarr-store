@@ -475,4 +475,40 @@ class NopCommerceCaptureTest extends CommonClassTest
 		$this->assertEquals(7.0, $sync->getStockInWarehouse($product->id, $source), 'A manual transfer must still decrement the source');
 		$this->assertEquals(3.0, $sync->getStockInWarehouse($product->id, $dest), 'A manual transfer must still increment the destination');
 	}
+
+	/**
+	 * The pulled payload tells the webshop where the transfer came from and whether its
+	 * stock has already moved.
+	 *
+	 * @return void
+	 */
+	public function testPayloadCarriesTheOrigin()
+	{
+		global $db, $user;
+		$db = $this->savdb;
+
+		require_once dirname(__FILE__).'/../class/nopcommercesync.class.php';
+
+		$source = $this->makeWarehouse('pl-src');
+		$dest = $this->makeWarehouse('pl-dst');
+		$product = $this->makeProduct('pl');
+
+		$transfer = new NopCommerceTransfer($db);
+		$transfer->fk_warehouse_source = $source;
+		$transfer->fk_warehouse_destination = $dest;
+		$this->assertGreaterThan(0, $transfer->create($user), 'create failed: '.$transfer->error);
+		$this->assertGreaterThan(0, $transfer->addLine($user, $product->id, 1.0, ''), 'addLine failed: '.$transfer->error);
+		$this->assertGreaterThan(0, $transfer->fetchLines(), 'Failed to reload the lines');
+
+		$sync = new NopCommerceSync($db);
+
+		$payload = $sync->buildTransferPayload($transfer);
+		$this->assertSame(NopCommerceTransfer::ORIGIN_MANUAL, $payload['origin'], 'A hand-built transfer reports the manual origin');
+		$this->assertFalse($payload['stock_already_moved'], 'A hand-built transfer has not moved its stock');
+
+		$transfer->origin = NopCommerceTransfer::ORIGIN_NATIVE;
+		$payload = $sync->buildTransferPayload($transfer);
+		$this->assertSame(NopCommerceTransfer::ORIGIN_NATIVE, $payload['origin'], 'A captured transfer reports the native origin');
+		$this->assertTrue($payload['stock_already_moved'], 'A captured transfer has already moved its stock');
+	}
 }

@@ -153,6 +153,8 @@ class NopCommerceSync
 			'ref' => $transfer->ref,
 			'label' => $transfer->label,
 			'status' => (int) $transfer->status,
+			'origin' => (string) $transfer->origin,
+			'stock_already_moved' => $transfer->stockAlreadyMoved(),
 			'sync_flag' => (bool) $transfer->sync_flag,
 			'sync_attempts' => (int) $transfer->sync_attempts,
 			'pull_token' => $transfer->pull_token,

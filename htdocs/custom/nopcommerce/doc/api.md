@@ -13,6 +13,17 @@ when that report says success.
 | Transfer (`llx_nopcommerce_transfer`) | One batch of products moving parent -> webshop. The unit nopCommerce pulls and acknowledges |
 | Transfer line (`llx_nopcommerce_transferline`) | One product of that batch. For a sized article this is the variant child product, so each size is its own line |
 | `sync_flag` | On the transfer and on every line. `0` = not yet recorded by nopCommerce, `1` = recorded |
+| `origin` | `manual` when the transfer was built by hand (only possible before the stock transfer capture existed), `native` when it was captured from a Dolibarr stock transfer |
+| `stock_already_moved` | `true` when Dolibarr has already moved the stock for this transfer. Acknowledging it records the products and raises the flags **without moving stock again** |
+
+A transfer is created by moving stock into the webshop warehouse on Dolibarr's native
+stock transfer page, when the source and destination warehouses match the two configured
+in the module setup. The stock therefore moves **at transfer time**, not at
+acknowledgement time, and such a transfer reports `stock_already_moved: true`.
+Acknowledging it records your product ids and marks it synced, but moves no stock.
+
+Refs are of the form `NOP-M<stock movement id>`. They are unique but not sequential, and
+nothing should be inferred from their order — key on `transfer_id`.
 
 ## Transfer life cycle
 
@@ -219,3 +230,13 @@ Calling the acknowledgement twice is safe. A transfer that is already `SYNCED` a
 The reverse direction, where nopCommerce reports its own sales so that Dolibarr decrements
 the webshop warehouse, is not part of this version. It will be a separate endpoint added
 alongside the nopCommerce plugin.
+
+## Known limitation: the sync is one-directional
+
+Only stock moving **into** the webshop warehouse is reported. Moving stock back out — a
+return to the parent warehouse, a correction — tells this API nothing, so the shop will
+still believe the earlier quantity is available and can oversell.
+
+`stock_in_webshop_warehouse` in the pull payload is a snapshot taken at pull time, so a
+warehouse with no new transfers never refreshes. If your shop needs authoritative stock
+levels, do not rely on this API for them.
