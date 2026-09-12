@@ -171,10 +171,8 @@ if ($search_warehouse > 0) {
 	$param .= '&search_warehouse='.urlencode((string) $search_warehouse);
 }
 
-$newcardbutton = '';
-if ($user->hasRight('nopcommerce', 'write')) {
-	$newcardbutton = dolGetButtonTitle($langs->trans('NewNopCommerceTransfer'), '', 'fa fa-plus-circle', dol_buildpath('/nopcommerce/transfer_card.php', 1).'?action=create');
-}
+// No "new" button: rows are never created by hand, only captured from the native stock
+// transfer page when the warehouse pair matches the module setup.
 
 print '<form method="POST" id="searchFormList" action="'.$_SERVER["PHP_SELF"].'">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
@@ -182,7 +180,7 @@ print '<input type="hidden" name="action" value="list">';
 print '<input type="hidden" name="sortfield" value="'.dol_escape_htmltag($sortfield).'">';
 print '<input type="hidden" name="sortorder" value="'.dol_escape_htmltag($sortorder).'">';
 
-print_barre_liste($title, $page, $_SERVER["PHP_SELF"], $param, $sortfield, $sortorder, '', $num, $nbtotalofrecords, 'stock', 0, $newcardbutton, '', $limit, 0, 0, 1);
+print_barre_liste($title, $page, $_SERVER["PHP_SELF"], $param, $sortfield, $sortorder, '', $num, $nbtotalofrecords, 'stock', 0, '', '', $limit, 0, 0, 1);
 
 print '<div class="div-table-responsive">';
 print '<table class="tagtable nobottomiftotal liste">';

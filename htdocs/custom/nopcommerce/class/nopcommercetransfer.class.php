@@ -665,7 +665,9 @@ class NopCommerceTransfer extends CommonObject
 			$notooltip = 1;
 		}
 
-		$url = dol_buildpath('/nopcommerce/transfer_card.php', 1).'?id='.$this->id;
+		// A transfer has no card page: it is an internal envelope, never edited by hand. The
+		// link goes to the sync list filtered on this ref, which is the only place it is shown.
+		$url = dol_buildpath('/nopcommerce/transfer_list.php', 1).'?search_ref='.urlencode((string) $this->ref);
 
 		$label = img_picto('', $this->picto).' <u>'.$langs->trans("NopCommerceTransfer").'</u>';
 		$label .= '<br><b>'.$langs->trans('Ref').':</b> '.$this->ref;

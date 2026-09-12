@@ -52,32 +52,6 @@ function nopcommerceAdminPrepareHead()
 }
 
 /**
- * Prepare the tabs of a transfer card
- *
- * @param	NopCommerceTransfer	$object		Transfer shown
- * @return	array<array{string,string,string}>
- */
-function nopcommerceTransferPrepareHead($object)
-{
-	global $langs, $conf;
-
-	$langs->load("nopcommerce@nopcommerce");
-
-	$h = 0;
-	$head = array();
-
-	$head[$h][0] = dol_buildpath("/nopcommerce/transfer_card.php", 1).'?id='.$object->id;
-	$head[$h][1] = $langs->trans("Card");
-	$head[$h][2] = 'card';
-	$h++;
-
-	complete_head_from_modules($conf, $langs, $object, $head, $h, 'nopcommercetransfer@nopcommerce');
-	complete_head_from_modules($conf, $langs, $object, $head, $h, 'nopcommercetransfer@nopcommerce', 'remove');
-
-	return $head;
-}
-
-/**
  * Return the base URL of the REST endpoints this module exposes, for display in the setup page.
  *
  * @return string	Absolute URL, without a trailing slash

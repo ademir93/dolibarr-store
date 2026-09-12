@@ -38,7 +38,6 @@ NopCommerceAllowNegativeSourceStockTooltip = When disabled, an acknowledgement i
 # Objects
 NopCommerceTransfer = nopCommerce transfer
 NopCommerceTransfers = nopCommerce transfers
-NewNopCommerceTransfer = New nopCommerce transfer
 NopCommerceTransferLine = Transfer line
 NopCommerceTransferLines = Products of the transfer
 NopCommerceSourceWarehouse = Source warehouse

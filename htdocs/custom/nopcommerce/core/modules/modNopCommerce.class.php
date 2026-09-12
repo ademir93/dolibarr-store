@@ -192,20 +192,9 @@ class modNopCommerce extends DolibarrModules
 			'user'     => 2,
 		);
 
-		$this->menu[$r++] = array(
-			'fk_menu'  => 'fk_mainmenu=products,fk_leftmenu=nopcommerce',
-			'type'     => 'left',
-			'titre'    => 'NewNopCommerceTransfer',
-			'mainmenu' => 'products',
-			'leftmenu' => 'nopcommerce_new',
-			'url'      => '/nopcommerce/transfer_card.php?action=create',
-			'langs'    => 'nopcommerce@nopcommerce',
-			'position' => 1000 + $r,
-			'enabled'  => "isModEnabled('nopcommerce')",
-			'perms'    => '$user->hasRight("nopcommerce", "write")',
-			'target'   => '',
-			'user'     => 2,
-		);
+		// There is no "new transfer" entry on purpose. Products are never queued for sync by
+		// hand: they are captured from the native stock transfer page when the warehouse pair
+		// matches NOPCOMMERCE_SOURCE_WAREHOUSE_ID and NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID.
 
 		// Exports / Imports
 		$r = 0;
