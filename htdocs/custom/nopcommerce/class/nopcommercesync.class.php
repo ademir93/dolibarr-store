@@ -313,8 +313,14 @@ class NopCommerceSync
 		$label = $langs->transnoentitiesnoconv('NopCommerceMovementLabel', $transfer->ref);
 		$inventorycode = 'NOPSYNC-'.$transfer->ref;
 
+		// A captured transfer moved its stock on the native stock transfer page before
+		// nopCommerce ever saw it. Moving it again here would double-count it, and the
+		// available-stock check below would reject the acknowledgement outright, because
+		// the source warehouse has already been decremented.
+		$stockalreadymoved = $transfer->stockAlreadyMoved();
+
 		foreach ($transfer->lines as $line) {
-			if (!$allownegative) {
+			if (!$stockalreadymoved && !$allownegative) {
 				$available = $this->getStockInWarehouse($line->fk_product, $transfer->fk_warehouse_source);
 				if ($available < $line->qty) {
 					$this->error = $langs->transnoentitiesnoconv('NopCommerceNotEnoughStock', $line->fk_product, $available, $line->qty);
@@ -324,32 +330,35 @@ class NopCommerceSync
 				}
 			}
 
-			$movementout = new MouvementStock($this->db);
-			$movementout->origin_type = 'nopcommercetransfer';
-			$movementout->origin_id = $transfer->id;
-			$resultout = $movementout->livraison($user, $line->fk_product, $transfer->fk_warehouse_source, $line->qty, 0, $label, '', '', '', (string) $line->batch, 0, $inventorycode);
-			if ($resultout < 0) {
-				$this->error = $movementout->error;
-				$this->errors = array_merge($this->errors, $movementout->errors);
-				$this->db->rollback();
-				return -1;
-			}
+			if (!$stockalreadymoved) {
+				$movementout = new MouvementStock($this->db);
+				$movementout->origin_type = NopCommerceTransfer::ORIGIN_TYPE;
+				$movementout->origin_id = $transfer->id;
+				$resultout = $movementout->livraison($user, $line->fk_product, $transfer->fk_warehouse_source, $line->qty, 0, $label, '', '', '', (string) $line->batch, 0, $inventorycode);
+				if ($resultout < 0) {
+					$this->error = $movementout->error;
+					$this->errors = array_merge($this->errors, $movementout->errors);
+					$this->db->rollback();
+					return -1;
+				}
 
-			$movementin = new MouvementStock($this->db);
-			$movementin->origin_type = 'nopcommercetransfer';
-			$movementin->origin_id = $transfer->id;
-			$resultin = $movementin->reception($user, $line->fk_product, $transfer->fk_warehouse_destination, $line->qty, 0, $label, '', '', (string) $line->batch, '', 0, $inventorycode);
-			if ($resultin < 0) {
-				$this->error = $movementin->error;
-				$this->errors = array_merge($this->errors, $movementin->errors);
-				$this->db->rollback();
-				return -1;
+				$movementin = new MouvementStock($this->db);
+				$movementin->origin_type = NopCommerceTransfer::ORIGIN_TYPE;
+				$movementin->origin_id = $transfer->id;
+				$resultin = $movementin->reception($user, $line->fk_product, $transfer->fk_warehouse_destination, $line->qty, 0, $label, '', '', (string) $line->batch, '', 0, $inventorycode);
+				if ($resultin < 0) {
+					$this->error = $movementin->error;
+					$this->errors = array_merge($this->errors, $movementin->errors);
+					$this->db->rollback();
+					return -1;
+				}
+
+				$line->fk_mouvement_source = $movementout->id;
+				$line->fk_mouvement_destination = $movementin->id;
 			}
 
 			$line->sync_flag = 1;
 			$line->sync_error = null;
-			$line->fk_mouvement_source = $movementout->id;
-			$line->fk_mouvement_destination = $movementin->id;
 
 			if (isset($lineresults[$line->id])) {
 				$result = $lineresults[$line->id];

@@ -390,4 +390,89 @@ class NopCommerceCaptureTest extends CommonClassTest
 
 		NopCommerceCapture::forget();
 	}
+
+	/**
+	 * Acknowledging a captured transfer records the sync without moving stock again.
+	 *
+	 * @return void
+	 */
+	public function testAckOfACapturedTransferMovesNoStock()
+	{
+		global $conf, $db, $user;
+		$db = $this->savdb;
+
+		require_once dirname(__FILE__).'/../class/nopcommercesync.class.php';
+
+		$source = $this->makeWarehouse('ack-src');
+		$dest = $this->makeWarehouse('ack-dst');
+		$product = $this->makeProduct('ack');
+
+		$conf->global->NOPCOMMERCE_SOURCE_WAREHOUSE_ID = $source;
+		$conf->global->NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID = $dest;
+
+		$this->assertGreaterThan(0, $product->correct_stock($user, $source, 10, 0, 'phpunit seed', 0, 'PHPUNITSEED'), 'Failed to seed stock');
+
+		NopCommerceCapture::forget();
+		NopCommerceCapture::expect($product->id, $source, $dest);
+		$this->assertGreaterThan(0, $product->correct_stock($user, $source, 4, 1, 'phpunit transfer', 0, 'PHPUNITACK'), 'Outbound leg failed');
+		$this->assertGreaterThan(0, $product->correct_stock($user, $dest, 4, 0, 'phpunit transfer', 0, 'PHPUNITACK'), 'Inbound leg failed');
+
+		$sync = new NopCommerceSync($db);
+		$stocksourcebefore = $sync->getStockInWarehouse($product->id, $source);
+		$stockdestbefore = $sync->getStockInWarehouse($product->id, $dest);
+		$this->assertEquals(6.0, $stocksourcebefore, 'The native transfer should have left 6 in the source');
+		$this->assertEquals(4.0, $stockdestbefore, 'The native transfer should have put 4 in the destination');
+
+		$sql = "SELECT rowid FROM ".MAIN_DB_PREFIX."nopcommerce_transfer WHERE fk_warehouse_destination = ".((int) $dest);
+		$resql = $db->query($sql);
+		$this->assertNotFalse($resql, 'Query failed: '.$db->lasterror());
+		$transferid = (int) $db->fetch_object($resql)->rowid;
+
+		$transfer = new NopCommerceTransfer($db);
+		$this->assertGreaterThan(0, $transfer->fetch($transferid), 'Failed to reload the captured transfer');
+		$this->assertGreaterThan(0, $transfer->fetchLines(), 'Failed to reload its lines');
+
+		$this->assertGreaterThan(0, $sync->applyAckSuccess($user, $transfer, array()), 'applyAckSuccess failed: '.$sync->error);
+
+		$this->assertEquals($stocksourcebefore, $sync->getStockInWarehouse($product->id, $source), 'The source stock must not move again');
+		$this->assertEquals($stockdestbefore, $sync->getStockInWarehouse($product->id, $dest), 'The destination stock must not move again');
+		$this->assertSame(NopCommerceTransfer::STATUS_SYNCED, (int) $transfer->status, 'The transfer must be marked synced');
+		$this->assertSame(1, (int) $transfer->sync_flag, 'The sync flag must be raised');
+	}
+
+	/**
+	 * A transfer built by hand still moves its stock when acknowledged. This is what
+	 * protects rows created before capture existed.
+	 *
+	 * @return void
+	 */
+	public function testAckOfAManualTransferStillMovesStock()
+	{
+		global $db, $user;
+		$db = $this->savdb;
+
+		require_once dirname(__FILE__).'/../class/nopcommercesync.class.php';
+
+		$source = $this->makeWarehouse('man-src');
+		$dest = $this->makeWarehouse('man-dst');
+		$product = $this->makeProduct('man');
+
+		$this->assertGreaterThan(0, $product->correct_stock($user, $source, 10, 0, 'phpunit seed', 0, 'PHPUNITSEED'), 'Failed to seed stock');
+
+		NopCommerceCapture::forget();
+
+		$transfer = new NopCommerceTransfer($db);
+		$transfer->fk_warehouse_source = $source;
+		$transfer->fk_warehouse_destination = $dest;
+		$this->assertGreaterThan(0, $transfer->create($user), 'create failed: '.$transfer->error);
+		$this->assertGreaterThan(0, $transfer->addLine($user, $product->id, 3.0, ''), 'addLine failed: '.$transfer->error);
+		$this->assertGreaterThan(0, $transfer->validate($user, 0, 'NOP-M999002'), 'validate failed: '.$transfer->error);
+		$this->assertGreaterThan(0, $transfer->fetchLines(), 'Failed to reload the lines');
+
+		$sync = new NopCommerceSync($db);
+		$this->assertGreaterThan(0, $sync->applyAckSuccess($user, $transfer, array()), 'applyAckSuccess failed: '.$sync->error);
+
+		$this->assertEquals(7.0, $sync->getStockInWarehouse($product->id, $source), 'A manual transfer must still decrement the source');
+		$this->assertEquals(3.0, $sync->getStockInWarehouse($product->id, $dest), 'A manual transfer must still increment the destination');
+	}
 }

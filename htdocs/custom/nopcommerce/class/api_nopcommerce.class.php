@@ -272,7 +272,9 @@ class NopCommerce extends DolibarrApi
 				'status' => (int) $transfer->status,
 				'sync_flag' => true,
 				'already_synced' => false,
-				'message' => 'Stock moved and sync flag set to true',
+				'message' => $transfer->stockAlreadyMoved()
+					? 'Sync flag set to true. No stock was moved: this transfer was captured from a stock transfer that already moved it'
+					: 'Stock moved and sync flag set to true',
 			);
 		}
 
