@@ -447,13 +447,18 @@ class NopCommerceTransfer extends CommonObject
 
 	/**
 	 * Move the transfer to PENDING so nopCommerce can pull it. No stock is moved here:
-	 * the stock only moves once nopCommerce acknowledges the transfer.
+	 * for a manual transfer the stock moves once nopCommerce acknowledges it, and for a
+	 * captured one it already moved on the native stock transfer page.
 	 *
 	 * @param	User		$user		User that validates
 	 * @param	int<0,1>	$notrigger	0=launch triggers after, 1=disable triggers
+	 * @param	string		$forceref	Ref to use verbatim. Capture passes a ref derived
+	 *                                  from the destination stock movement id, which is
+	 *                                  unique by construction and so cannot race the way
+	 *                                  getNextNumRef() does. Empty falls back to the counter.
 	 * @return	int<-1,1>				Return integer <0 if KO, >0 if OK
 	 */
-	public function validate(User $user, $notrigger = 0)
+	public function validate(User $user, $notrigger = 0, $forceref = '')
 	{
 		if ($this->status != self::STATUS_DRAFT) {
 			$this->error = 'OnlyADraftTransferCanBeValidated';
@@ -470,7 +475,7 @@ class NopCommerceTransfer extends CommonObject
 
 		$this->db->begin();
 
-		$newref = $this->getNextNumRef();
+		$newref = ($forceref !== '') ? $forceref : $this->getNextNumRef();
 		if ($newref === '') {
 			$this->error = 'FailedToBuildTheNextRef';
 			$this->errors[] = $this->error;
@@ -504,29 +509,6 @@ class NopCommerceTransfer extends CommonObject
 		$this->db->commit();
 
 		return 1;
-	}
-
-	/**
-	 * Send the transfer back to draft. Refused once nopCommerce has confirmed it.
-	 *
-	 * @param	User		$user		User that acts
-	 * @param	int<0,1>	$notrigger	0=launch triggers after, 1=disable triggers
-	 * @return	int<-1,1>				Return integer <0 if KO, >0 if OK
-	 */
-	public function setDraft(User $user, $notrigger = 0)
-	{
-		if ($this->status == self::STATUS_SYNCED) {
-			$this->error = 'CannotReopenASyncedTransfer';
-			$this->errors[] = $this->error;
-			return -1;
-		}
-
-		$result = $this->setStatusCommon($user, self::STATUS_DRAFT, $notrigger, $this->TRIGGER_PREFIX.'_UNVALIDATE');
-		if ($result < 0) {
-			return -1;
-		}
-
-		return $this->clearPullToken();
 	}
 
 	/**
@@ -724,7 +706,7 @@ class NopCommerceTransfer extends CommonObject
 	public function initAsSpecimen()
 	{
 		$this->initAsSpecimenCommon();
-		$this->ref = 'NOP2601-0001';
+		$this->ref = 'NOP-M1187';
 
 		return 1;
 	}

@@ -78,4 +78,80 @@ class NopCommerceCaptureTest extends CommonClassTest
 
 		$this->assertTrue($transfer->stockAlreadyMoved(), 'A captured transfer must not move stock again');
 	}
+
+	/**
+	 * Build a warehouse for tests and return its id.
+	 *
+	 * @param	string	$suffix		Suffix making the label unique
+	 * @return	int					Warehouse id
+	 */
+	private function makeWarehouse($suffix)
+	{
+		global $db, $user;
+
+		$warehouse = new Entrepot($db);
+		$warehouse->initAsSpecimen();
+		$warehouse->label .= ' phpunit nop '.$suffix;
+		$warehouse->description .= ' phpunit nop '.$suffix;
+		$id = $warehouse->create($user);
+		$this->assertGreaterThan(0, $id, 'Failed to create warehouse '.$suffix.': '.$warehouse->error);
+
+		return $id;
+	}
+
+	/**
+	 * Build a simple product for tests and return it.
+	 *
+	 * @param	string	$suffix		Suffix making the ref unique
+	 * @return	Product				Created product
+	 */
+	private function makeProduct($suffix)
+	{
+		global $db, $user;
+
+		$product = new Product($db);
+		$product->initAsSpecimen();
+		$product->ref .= ' phpunit nop '.$suffix;
+		$product->label .= ' phpunit nop '.$suffix;
+		$id = $product->create($user);
+		$this->assertGreaterThan(0, $id, 'Failed to create product '.$suffix.': '.$product->error);
+
+		return $product;
+	}
+
+	/**
+	 * validate() uses the ref it is given instead of the sequential counter.
+	 *
+	 * @return void
+	 */
+	public function testValidateAcceptsAForcedRef()
+	{
+		global $db, $user;
+		$db = $this->savdb;
+
+		$source = $this->makeWarehouse('vr-src');
+		$dest = $this->makeWarehouse('vr-dst');
+		$product = $this->makeProduct('vr');
+
+		$transfer = new NopCommerceTransfer($db);
+		$transfer->fk_warehouse_source = $source;
+		$transfer->fk_warehouse_destination = $dest;
+		$this->assertGreaterThan(0, $transfer->create($user), 'create failed: '.$transfer->error);
+		$this->assertGreaterThan(0, $transfer->addLine($user, $product->id, 2.0, ''), 'addLine failed: '.$transfer->error);
+
+		$this->assertGreaterThan(0, $transfer->validate($user, 0, 'NOP-M999001'), 'validate failed: '.$transfer->error);
+		$this->assertSame('NOP-M999001', $transfer->ref, 'The forced ref must be used verbatim');
+		$this->assertSame(NopCommerceTransfer::STATUS_PENDING, (int) $transfer->status, 'validate must move the transfer to pending');
+	}
+
+	/**
+	 * setDraft() is gone, so a captured transfer can never be reopened and have a line
+	 * added whose stock has not moved.
+	 *
+	 * @return void
+	 */
+	public function testSetDraftNoLongerExists()
+	{
+		$this->assertFalse(method_exists('NopCommerceTransfer', 'setDraft'), 'setDraft must be deleted, not guarded');
+	}
 }
