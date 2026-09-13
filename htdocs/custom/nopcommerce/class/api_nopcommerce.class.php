@@ -202,9 +202,9 @@ class NopCommerce extends DolibarrApi
 	 * Calling it twice is safe: an already confirmed transfer answers already_synced
 	 * without touching the stock again.
 	 *
-	 * @param	int						$id				Id of the transfer
-	 * @param	?array<string,mixed>	$request_data	Acknowledgement sent by nopCommerce
-	 * @return	array<string,mixed>						Resulting state of the transfer
+	 * @param	int		$id				Id of the transfer
+	 * @param	array	$request_data	Acknowledgement sent by nopCommerce
+	 * @return	array<string,mixed>		Resulting state of the transfer
 	 *
 	 * @url	POST transfers/{id}/ack
 	 *
