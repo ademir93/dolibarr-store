@@ -215,6 +215,31 @@ class modNopCommerce extends DolibarrModules
 
 		$this->remove($options);
 
+		// Product identifier on the nopCommerce side, added as an extrafield so the
+		// product create/edit page shows and saves it without touching core files.
+		include_once DOL_DOCUMENT_ROOT.'/core/class/extrafields.class.php';
+		$extrafields = new ExtraFields($this->db);
+		$extrafields->addExtraField(
+			'nopcommerce_external_id',
+			'NopCommerceExternalId',
+			'int',
+			1,
+			'11',
+			'product',
+			0,
+			0,
+			'',
+			'',
+			1,
+			'',
+			1,
+			'NopCommerceExternalIdTooltip',
+			'',
+			'',
+			'nopcommerce@nopcommerce',
+			'1'
+		);
+
 		$sql = array();
 
 		return $this->_init($sql, $options);

@@ -36,6 +36,8 @@ NopCommerceAllowNegativeSourceStock = Allow the source warehouse to go negative
 NopCommerceAllowNegativeSourceStockTooltip = When disabled, an acknowledgement is refused if the source warehouse does not hold enough stock for a line, and nothing is moved.
 
 # Objects
+NopCommerceExternalId = External ID
+NopCommerceExternalIdTooltip = Identifier of this product on the nopCommerce webshop
 NopCommerceTransfer = nopCommerce transfer
 NopCommerceTransfers = nopCommerce transfers
 NopCommerceTransferLine = Transfer line

@@ -256,7 +256,7 @@ print '<div class="div-table-responsive">';
 print '<table class="tagtable nobottomiftotal liste">';
 
 $showbatch = isModEnabled('productbatch');
-$nbcols = $showbatch ? 11 : 10;
+$nbcols = $showbatch ? 12 : 11;
 
 // Filter row
 print '<tr class="liste_titre_filter">';
@@ -271,6 +271,7 @@ print '<td class="liste_titre">'.$formproduct->selectWarehouses($search_warehous
 print '<td class="liste_titre"><input type="text" class="flat maxwidth75" name="search_ref" value="'.dol_escape_htmltag($search_ref).'"></td>';
 print '<td class="liste_titre center"></td>';
 print '<td class="liste_titre center">'.$form->selectarray('search_status', array('' => '', '0' => $langs->trans('Draft'), '1' => $langs->trans('NopCommerceStatusPending'), '2' => $langs->trans('NopCommerceStatusSynced'), '3' => $langs->trans('NopCommerceStatusFailed'), '9' => $langs->trans('Canceled')), $search_status, 0, 0, 0, '', 0, 0, 0, '', 'maxwidth100').'</td>';
+print '<td class="liste_titre center"></td>';
 print '<td class="liste_titre center">'.$form->selectarray('search_sync_flag', array('' => '', '0' => $langs->trans('NopCommerceSyncFalse'), '1' => $langs->trans('NopCommerceSyncTrue')), $search_sync_flag, 0, 0, 0, '', 0, 0, 0, '', 'maxwidth75').'</td>';
 print '<td class="liste_titre center maxwidthsearch">'.$form->showFilterButtons().'</td>';
 print '</tr>';
@@ -288,6 +289,7 @@ print_liste_field_titre("NopCommerceWebshopWarehouse", $_SERVER["PHP_SELF"], "ed
 print_liste_field_titre("Ref", $_SERVER["PHP_SELF"], "t.ref", "", $param, "", $sortfield, $sortorder);
 print_liste_field_titre("DateCreation", $_SERVER["PHP_SELF"], "t.date_creation", "", $param, '', $sortfield, $sortorder, 'center ');
 print_liste_field_titre("Status", $_SERVER["PHP_SELF"], "t.status", "", $param, '', $sortfield, $sortorder, 'center ');
+print_liste_field_titre("NopCommerceProductId", $_SERVER["PHP_SELF"], "l.nop_product_id", "", $param, '', $sortfield, $sortorder, 'center ');
 print_liste_field_titre("NopCommerceSyncFlag", $_SERVER["PHP_SELF"], "l.sync_flag", "", $param, '', $sortfield, $sortorder, 'center ');
 print_liste_field_titre('', $_SERVER["PHP_SELF"], "", '', '', '', $sortfield, $sortorder, 'center maxwidthsearch ');
 print '</tr>';
@@ -328,6 +330,7 @@ while ($i < min($num, $limit)) {
 	print '<td class="nowraponall">'.$transfertmp->getNomUrl(0).'</td>';
 	print '<td class="center nowraponall">'.dol_print_date($db->jdate($obj->date_creation), 'dayhour').'</td>';
 	print '<td class="center">'.$transfertmp->getLibStatut(5).'</td>';
+	print '<td class="center">'.($obj->nop_product_id !== null ? (int) $obj->nop_product_id : '').'</td>';
 
 	// Sync indicator, read only on purpose: marking a product synced by hand would claim
 	// a sync that never happened.
