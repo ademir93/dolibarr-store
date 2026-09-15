@@ -11,8 +11,10 @@ for whoever implements the `sync_products` scheduled task in the nopCommerce plu
 (`Nop.Plugin.Misc.DolibarrIntegration`, nop-store repo) and the matching endpoint on the
 Dolibarr side (this repo, `htdocs/custom/nopcommerce`).
 
-**Status: not implemented on either side yet.** This is the spec to build against, not a
-description of existing behaviour.
+**Status: superseded on the Dolibarr side.** The endpoint that was built is
+`POST /nopcommerce/order_completed`, one call per order, all or nothing. See
+[api.md](api.md#completed-orders-post-order_completed). This document is kept for the
+design discussion.
 
 ## Direction and ownership
 

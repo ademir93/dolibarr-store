@@ -225,11 +225,62 @@ Calling the acknowledgement twice is safe. A transfer that is already `SYNCED` a
 | `NOPCOMMERCE_ACK_REQUIRE_TOKEN` | 1 | Require the `pull_token` on acknowledgement. Turn off only while testing |
 | `NOPCOMMERCE_ALLOW_NEGATIVE_SOURCE_STOCK` | 0 | Allow an acknowledgement to push the source warehouse below zero |
 
-## Not built yet
+## Completed orders: `POST /order_completed`
 
-The reverse direction, where nopCommerce reports its own sales so that Dolibarr decrements
-the webshop warehouse, is not part of this version. It will be a separate endpoint added
-alongside the nopCommerce plugin.
+The reverse direction. nopCommerce reports a completed order and Dolibarr takes the sold
+quantities out of the webshop warehouse (`NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID`).
+
+```json
+{
+  "orderid": 1001,
+  "items": [
+    {"productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2}
+  ]
+}
+```
+
+`orderid` is the nopCommerce order id. Each item is the plugin's `OrderProductLine`.
+
+For each item Dolibarr:
+
+1. finds the product whose extrafield `nopcommerce_external_id` equals `productid`.
+   Creating variants copies the parent's extrafields, so variants holding the same id are
+   ignored in favour of their parent,
+2. if that product has variants, picks the one whose value equals `attributeValue`
+   (case-insensitive, matched on the value or its ref). `attribute` is only used to choose
+   between several variants carrying that value, since the attribute may be named
+   differently on each side (Size / Veličina),
+3. refuses the order if the webshop warehouse has less than `quantity`, unless
+   `NOPCOMMERCE_ALLOW_NEGATIVE_SOURCE_STOCK` is on,
+4. writes an exit stock movement (inventory code `NOPORDER-<orderid>`).
+
+It then records the order in `llx_nop_order_completed` and one row per item in
+`llx_nop_order_complete_items`.
+
+All of it runs in a single database transaction. If any item fails, no stock moves and
+nothing is recorded. Sending an order that is already recorded answers `200` with
+`already_completed: true` and changes nothing.
+
+```json
+{
+  "order_id": 1001,
+  "completed_id": 7,
+  "already_completed": false,
+  "message": "Stock taken out of the webshop warehouse and order recorded",
+  "items": [
+    {"productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2,
+     "fk_product": 5, "stock_movement_id": 812, "stock_in_webshop_warehouse": 3}
+  ]
+}
+```
+
+| Code | When |
+|---|---|
+| 400 | No JSON body, `orderid` missing, `items` empty, or an item without `productid` or a positive `quantity` |
+| 403 | The API key holds no `nopcommerce->sync` permission |
+| 404 | An item matches no product, or no single variant. Nothing was applied |
+| 409 | The webshop warehouse lacks the stock for an item. Nothing was applied |
+| 500 | Webshop warehouse not configured, or the stock movement or database write failed |
 
 ## Known limitation: the sync is one-directional
 

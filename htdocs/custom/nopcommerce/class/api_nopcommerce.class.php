@@ -296,6 +296,88 @@ class NopCommerce extends DolibarrApi
 	}
 
 	/**
+	 * Report a completed order
+	 *
+	 * nopCommerce calls this when an order is completed, with the products it sold.
+	 * Dolibarr finds each product by its nopCommerce external id (the product extrafield
+	 * nopcommerce_external_id), picks the variant carrying the sold attribute value, such
+	 * as Size = M, and takes the quantity out of the webshop warehouse. The order and its
+	 * items are then recorded.
+	 *
+	 * It is all or nothing: if one item matches no product or variant, or the webshop
+	 * warehouse lacks its stock, no stock moves and nothing is recorded.
+	 *
+	 * Body:
+	 *     {
+	 *       "orderid": 1001,
+	 *       "items": [
+	 *         {"productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2}
+	 *       ]
+	 *     }
+	 *
+	 * Calling it twice for the same order is safe: an order already recorded answers
+	 * already_completed without touching the stock again.
+	 *
+	 * @param	array	$request_data	Completed order sent by nopCommerce
+	 * @return	array<string,mixed>		Recorded order with the product and remaining stock of each item
+	 *
+	 * @url	POST order_completed
+	 *
+	 * @throws RestException 400 Bad Request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 409 Conflict
+	 * @throws RestException 500 Internal Server Error
+	 */
+	public function orderCompleted($request_data = null)
+	{
+		if (!DolibarrApiAccess::$user->hasRight('nopcommerce', 'sync')) {
+			throw new RestException(403, 'Access to the nopCommerce sync API not allowed for login '.DolibarrApiAccess::$user->login);
+		}
+		if (!is_array($request_data)) {
+			throw new RestException(400, 'A JSON body is required');
+		}
+
+		$noporderid = isset($request_data['orderid']) ? (int) $request_data['orderid'] : 0;
+		if ($noporderid <= 0) {
+			throw new RestException(400, 'Field orderid is required in the body and has to be a positive integer');
+		}
+		if (empty($request_data['items']) || !is_array($request_data['items'])) {
+			throw new RestException(400, 'Field items is required in the body and has to hold at least one product');
+		}
+
+		foreach ($request_data['items'] as $index => $item) {
+			if (!is_array($item) || empty($item['productid']) || (int) $item['productid'] <= 0) {
+				throw new RestException(400, 'Item '.$index.': productid is required and has to be a positive integer');
+			}
+			if (!isset($item['quantity']) || (int) $item['quantity'] <= 0) {
+				throw new RestException(400, 'Item '.$index.': quantity has to be greater than zero');
+			}
+		}
+
+		$result = $this->sync->syncProduct(DolibarrApiAccess::$user, $noporderid, array_values($request_data['items']));
+		if ($result == -2) {
+			throw new RestException(404, 'Order '.$noporderid.' was not applied: '.$this->sync->error);
+		}
+		if ($result == -3) {
+			throw new RestException(409, 'Order '.$noporderid.' was not applied: '.$this->sync->error);
+		}
+		if ($result < 0) {
+			throw new RestException(500, 'Failed to apply order '.$noporderid.': '.$this->sync->error);
+		}
+
+		return array(
+			'order_id' => $noporderid,
+			'completed_id' => (int) $this->sync->completedorderid,
+			'already_completed' => ($result == 0),
+			'message' => $result == 0
+				? 'Order was already recorded, nothing was changed'
+				: 'Stock taken out of the webshop warehouse and order recorded',
+			'items' => $this->sync->completeditems,
+		);
+	}
+
+	/**
 	 * Turn the lines of the body into a map keyed by line id.
 	 *
 	 * @param	array<string,mixed>				$request_data	Body of the acknowledgement

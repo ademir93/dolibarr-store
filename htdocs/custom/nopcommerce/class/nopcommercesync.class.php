@@ -52,6 +52,16 @@ class NopCommerceSync
 	public $errors = array();
 
 	/**
+	 * @var int Row id of llx_nop_order_completed the last syncProduct() call recorded or found
+	 */
+	public $completedorderid = 0;
+
+	/**
+	 * @var array<int,array<string,mixed>> Items the last syncProduct() call applied
+	 */
+	public $completeditems = array();
+
+	/**
 	 * Constructor
 	 *
 	 * @param DoliDB $db Database handler
@@ -274,13 +284,17 @@ class NopCommerceSync
 	 *
 	 * @param	int		$fk_product		Product id
 	 * @param	int		$fk_entrepot	Warehouse id
+	 * @param	bool	$forupdate		Lock the stock row until the transaction ends, so a concurrent call cannot spend the same stock
 	 * @return	float					Physical stock, 0 when the product has no row for that warehouse
 	 */
-	public function getStockInWarehouse($fk_product, $fk_entrepot)
+	public function getStockInWarehouse($fk_product, $fk_entrepot, $forupdate = false)
 	{
 		$sql = "SELECT reel FROM ".$this->db->prefix()."product_stock";
 		$sql .= " WHERE fk_product = ".((int) $fk_product);
 		$sql .= " AND fk_entrepot = ".((int) $fk_entrepot);
+		if ($forupdate) {
+			$sql .= " FOR UPDATE";
+		}
 
 		$resql = $this->db->query($sql);
 		if (!$resql) {
@@ -289,6 +303,280 @@ class NopCommerceSync
 		$obj = $this->db->fetch_object($resql);
 
 		return $obj ? (float) $obj->reel : 0.0;
+	}
+
+	/**
+	 * Apply an order nopCommerce reports as completed.
+	 *
+	 * Every sold line is matched to a Dolibarr product through its nopCommerce external id,
+	 * narrowed to the variant carrying the sold attribute value, and taken out of the
+	 * webshop warehouse. The order and its items are then recorded. All of it happens in
+	 * one database transaction: if any line cannot be matched or moved, no stock moves and
+	 * nothing is recorded.
+	 *
+	 * An order already recorded is not applied again.
+	 *
+	 * @param	User	$user			User the API call runs as
+	 * @param	int		$noporderid		Order id on the nopCommerce side
+	 * @param	array<int,array<string,mixed>>	$lines	Sold lines as nopCommerce sends them: productid, attribute, attributeValue, quantity
+	 * @return	int<-3,1>				1 if applied, 0 if the order was already recorded, -1 on a database or stock movement error, -2 if a line matches no single product, -3 if the webshop warehouse lacks the stock
+	 */
+	public function syncProduct(User $user, $noporderid, array $lines)
+	{
+		global $langs;
+
+		$langs->loadLangs(array('nopcommerce@nopcommerce'));
+
+		$this->completedorderid = 0;
+		$this->completeditems = array();
+
+		$warehouseid = getDolGlobalInt('NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID');
+		if ($warehouseid <= 0) {
+			$this->error = $langs->transnoentitiesnoconv('NopCommerceWebshopWarehouseNotSet');
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		$existing = $this->fetchCompletedOrderId($noporderid);
+		if ($existing < 0) {
+			return -1;
+		}
+		if ($existing > 0) {
+			$this->completedorderid = $existing;
+			return 0;
+		}
+
+		$allownegative = getDolGlobalInt('NOPCOMMERCE_ALLOW_NEGATIVE_SOURCE_STOCK');
+		$label = $langs->transnoentitiesnoconv('NopCommerceOrderMovementLabel', $noporderid);
+		$inventorycode = 'NOPORDER-'.((int) $noporderid);
+		$now = dol_now();
+
+		$this->db->begin();
+
+		// The order row goes in first. Its unique key makes a concurrent call for the same
+		// order wait here and then fail, instead of taking the stock out a second time.
+		$sql = "INSERT INTO ".$this->db->prefix()."nop_order_completed (nop_order_id, date_creation)";
+		$sql .= " VALUES (".((int) $noporderid).", '".$this->db->idate($now)."')";
+
+		if (!$this->db->query($sql)) {
+			$alreadyexists = ($this->db->lasterrno() == 'DB_ERROR_RECORD_ALREADY_EXISTS');
+			$this->error = $this->db->lasterror();
+			$this->db->rollback();
+			if ($alreadyexists) {
+				$this->error = '';
+				$this->completedorderid = max(0, $this->fetchCompletedOrderId($noporderid));
+				return 0;
+			}
+			$this->errors[] = $this->error;
+			return -1;
+		}
+		$completedid = (int) $this->db->last_insert_id($this->db->prefix()."nop_order_completed");
+
+		foreach ($lines as $line) {
+			$nopproductid = (int) $line['productid'];
+			$attribute = isset($line['attribute']) ? trim((string) $line['attribute']) : '';
+			$attributevalue = isset($line['attributeValue']) ? trim((string) $line['attributeValue']) : '';
+			$qty = (int) $line['quantity'];
+
+			$fk_product = $this->resolveOrderLineProduct($nopproductid, $attribute, $attributevalue);
+			if ($fk_product <= 0) {
+				$this->db->rollback();
+				return $fk_product;
+			}
+
+			if (!$allownegative) {
+				$available = $this->getStockInWarehouse($fk_product, $warehouseid, true);
+				if ($available < $qty) {
+					$this->error = $langs->transnoentitiesnoconv('NopCommerceNotEnoughStockInWebshop', $fk_product, $available, $qty);
+					$this->errors[] = $this->error;
+					$this->db->rollback();
+					return -3;
+				}
+			}
+
+			$movement = new MouvementStock($this->db);
+			$movementid = $movement->livraison($user, $fk_product, $warehouseid, $qty, 0, $label, '', '', '', '', 0, $inventorycode);
+			if ($movementid < 0) {
+				$this->error = $movement->error;
+				$this->errors = array_merge($this->errors, $movement->errors);
+				$this->db->rollback();
+				return -1;
+			}
+
+			$sql = "INSERT INTO ".$this->db->prefix()."nop_order_complete_items (fk_nop_order_completed, fk_product, nop_external_id, date_creation)";
+			$sql .= " VALUES (".$completedid.", ".((int) $fk_product).", ".$nopproductid.", '".$this->db->idate($now)."')";
+
+			if (!$this->db->query($sql)) {
+				$this->error = $this->db->lasterror();
+				$this->errors[] = $this->error;
+				$this->db->rollback();
+				return -1;
+			}
+
+			$this->completeditems[] = array(
+				'productid' => $nopproductid,
+				'attribute' => $attribute,
+				'attributeValue' => $attributevalue,
+				'quantity' => $qty,
+				'fk_product' => (int) $fk_product,
+				'stock_movement_id' => (int) $movementid,
+				'stock_in_webshop_warehouse' => $this->getStockInWarehouse($fk_product, $warehouseid),
+			);
+		}
+
+		$this->db->commit();
+
+		$this->completedorderid = $completedid;
+
+		return 1;
+	}
+
+	/**
+	 * Return the row id of an order already recorded as completed.
+	 *
+	 * @param	int		$noporderid		Order id on the nopCommerce side
+	 * @return	int						Row id of llx_nop_order_completed, 0 if not recorded, -1 on error
+	 */
+	public function fetchCompletedOrderId($noporderid)
+	{
+		$sql = "SELECT rowid FROM ".$this->db->prefix()."nop_order_completed";
+		$sql .= " WHERE nop_order_id = ".((int) $noporderid);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+		$obj = $this->db->fetch_object($resql);
+
+		return $obj ? (int) $obj->rowid : 0;
+	}
+
+	/**
+	 * Find the Dolibarr product a sold nopCommerce line takes its stock from.
+	 *
+	 * The product is the one whose extrafield nopcommerce_external_id holds the nopCommerce
+	 * product id. When it has variants, the variant is the one carrying the sold value, for
+	 * example M. The attribute name is only used to choose between several variants that
+	 * carry that value, because nopCommerce and Dolibarr may name the attribute differently
+	 * (Size on one side, Veličina on the other).
+	 *
+	 * @param	int		$nopproductid		Product id on the nopCommerce side
+	 * @param	string	$attribute			Attribute name, for example Size. May be empty
+	 * @param	string	$attributevalue		Sold attribute value, for example M. May be empty for a product without variants
+	 * @return	int							Id of the product to take the stock from, -1 on a database error, -2 when no single product matches
+	 */
+	public function resolveOrderLineProduct($nopproductid, $attribute, $attributevalue)
+	{
+		global $langs;
+
+		// Creating variants clones the parent, extrafields included, so the variants usually
+		// carry the parent's external id too. They are set aside in favour of their parent.
+		$sql = "SELECT e.fk_object, pc.fk_product_parent FROM ".$this->db->prefix()."product_extrafields as e";
+		$sql .= " INNER JOIN ".$this->db->prefix()."product as p ON p.rowid = e.fk_object";
+		$sql .= " LEFT JOIN ".$this->db->prefix()."product_attribute_combination as pc ON pc.fk_product_child = e.fk_object";
+		$sql .= " WHERE e.nopcommerce_external_id = ".((int) $nopproductid);
+		$sql .= " AND p.entity IN (".getEntity('product').")";
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		$productids = array();
+		$parentids = array();
+		while ($obj = $this->db->fetch_object($resql)) {
+			if (empty($obj->fk_product_parent)) {
+				$productids[(int) $obj->fk_object] = (int) $obj->fk_object;
+			} else {
+				$parentids[(int) $obj->fk_product_parent] = (int) $obj->fk_product_parent;
+			}
+		}
+		// Only variants hold the external id: use their parent when they share one.
+		if (count($productids) == 0 && count($parentids) == 1) {
+			$productids = $parentids;
+		}
+		$productids = array_values($productids);
+
+		if (count($productids) != 1) {
+			$this->error = $langs->transnoentitiesnoconv(count($productids) ? 'NopCommerceProductAmbiguous' : 'NopCommerceProductNotFound', $nopproductid);
+			$this->errors[] = $this->error;
+			return -2;
+		}
+		$productid = $productids[0];
+
+		$sql = "SELECT c.fk_product_child, pa.ref as attribute_ref, pa.label as attribute_label,";
+		$sql .= " pav.ref as value_ref, pav.value as value_label";
+		$sql .= " FROM ".$this->db->prefix()."product_attribute_combination as c";
+		$sql .= " INNER JOIN ".$this->db->prefix()."product_attribute_combination2val as c2v ON c2v.fk_prod_combination = c.rowid";
+		$sql .= " INNER JOIN ".$this->db->prefix()."product_attribute as pa ON pa.rowid = c2v.fk_prod_attr";
+		$sql .= " INNER JOIN ".$this->db->prefix()."product_attribute_value as pav ON pav.rowid = c2v.fk_prod_attr_val";
+		$sql .= " WHERE c.fk_product_parent = ".((int) $productid);
+		$sql .= " AND c.entity IN (".getEntity('product').")";
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		$hasvariants = false;
+		$matchingvalue = array();
+		$matchingattribute = array();
+		while ($obj = $this->db->fetch_object($resql)) {
+			$hasvariants = true;
+			if (!$this->sameText($obj->value_ref, $attributevalue) && !$this->sameText($obj->value_label, $attributevalue)) {
+				continue;
+			}
+			$matchingvalue[(int) $obj->fk_product_child] = true;
+			if ($this->sameText($obj->attribute_ref, $attribute) || $this->sameText($obj->attribute_label, $attribute)) {
+				$matchingattribute[(int) $obj->fk_product_child] = true;
+			}
+		}
+
+		// A product without variants, or a variant child that holds the external id itself.
+		if (!$hasvariants) {
+			return $productid;
+		}
+
+		if ($attributevalue === '') {
+			$this->error = $langs->transnoentitiesnoconv('NopCommerceVariantValueRequired', $nopproductid);
+			$this->errors[] = $this->error;
+			return -2;
+		}
+
+		$candidates = array_keys($matchingvalue);
+		if (count($candidates) > 1 && count($matchingattribute) > 0) {
+			$candidates = array_keys($matchingattribute);
+		}
+
+		if (count($candidates) != 1) {
+			$this->error = $langs->transnoentitiesnoconv(count($candidates) ? 'NopCommerceVariantAmbiguous' : 'NopCommerceVariantNotFound', $nopproductid, $attribute, $attributevalue);
+			$this->errors[] = $this->error;
+			return -2;
+		}
+
+		return $candidates[0];
+	}
+
+	/**
+	 * Compare two labels the way a shop user would: trimmed and case-insensitive.
+	 *
+	 * @param	string|null	$stored		Value stored in Dolibarr
+	 * @param	string		$sent		Value sent by nopCommerce
+	 * @return	bool					True when they match. An empty sent value never matches
+	 */
+	private function sameText($stored, $sent)
+	{
+		if ($sent === '') {
+			return false;
+		}
+
+		return mb_strtolower(trim((string) $stored), 'UTF-8') === mb_strtolower($sent, 'UTF-8');
 	}
 
 	/**

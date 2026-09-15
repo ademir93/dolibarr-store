@@ -98,3 +98,13 @@ CannotDeleteASyncedTransfer = A transfer already confirmed by nopCommerce cannot
 CannotCancelASyncedTransfer = A transfer already confirmed by nopCommerce cannot be canceled
 FailedToBuildTheNextRef = Failed to build the next reference
 NopCommerceCaptureFailed = The product could not be queued for nopCommerce, so the stock transfer was not made: %s
+
+# Completed orders
+NopCommerceOrderMovementLabel = nopCommerce order %s
+NopCommerceWebshopWarehouseNotSet = The webshop warehouse is not set in the module setup
+NopCommerceNotEnoughStockInWebshop = Product id %s has only %s in the webshop warehouse, the order needs %s
+NopCommerceProductNotFound = No product has the nopCommerce external id %s
+NopCommerceProductAmbiguous = Several products have the nopCommerce external id %s
+NopCommerceVariantValueRequired = The product with nopCommerce external id %s has variants, so the attribute value is required
+NopCommerceVariantNotFound = The product with nopCommerce external id %s has no variant %s %s
+NopCommerceVariantAmbiguous = The product with nopCommerce external id %s has several variants matching %s %s

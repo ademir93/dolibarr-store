@@ -189,6 +189,7 @@ $endpoints = array(
 	),
 	'POST' => array(
 		$apibase.'/transfers/{id}/ack',
+		$apibase.'/order_completed',
 	),
 );
 foreach ($endpoints as $method => $urls) {
