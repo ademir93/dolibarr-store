@@ -62,6 +62,16 @@ class NopCommerceSync
 	public $completeditems = array();
 
 	/**
+	 * @var int Row id of llx_nop_order_reversal the last reverseOrder() call recorded or found
+	 */
+	public $reversalid = 0;
+
+	/**
+	 * @var array<int,array<string,mixed>> Items the last reverseOrder() call applied
+	 */
+	public $reverseditems = array();
+
+	/**
 	 * Constructor
 	 *
 	 * @param DoliDB $db Database handler
@@ -403,8 +413,8 @@ class NopCommerceSync
 				return -1;
 			}
 
-			$sql = "INSERT INTO ".$this->db->prefix()."nop_order_complete_items (fk_nop_order_completed, fk_product, nop_external_id, date_creation)";
-			$sql .= " VALUES (".$completedid.", ".((int) $fk_product).", ".$nopproductid.", '".$this->db->idate($now)."')";
+			$sql = "INSERT INTO ".$this->db->prefix()."nop_order_complete_items (fk_nop_order_completed, fk_product, nop_external_id, qty, date_creation)";
+			$sql .= " VALUES (".$completedid.", ".((int) $fk_product).", ".$nopproductid.", ".$qty.", '".$this->db->idate($now)."')";
 
 			if (!$this->db->query($sql)) {
 				$this->error = $this->db->lasterror();
@@ -441,6 +451,271 @@ class NopCommerceSync
 	{
 		$sql = "SELECT rowid FROM ".$this->db->prefix()."nop_order_completed";
 		$sql .= " WHERE nop_order_id = ".((int) $noporderid);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+		$obj = $this->db->fetch_object($resql);
+
+		return $obj ? (int) $obj->rowid : 0;
+	}
+
+	/**
+	 * Reverse an order nopCommerce reports as cancelled, refunded or returned.
+	 *
+	 * Puts stock back into the webshop warehouse for a previously recorded completed
+	 * order, either in full or for the specific items and quantities given. An item can
+	 * never be reversed for more than the order still has outstanding for it: each row of
+	 * `llx_nop_order_complete_items` tracks how much of its original quantity has already
+	 * been reversed, and the check is made against what remains.
+	 *
+	 * All of it happens in one database transaction: if any requested item cannot be
+	 * matched or exceeds what remains, no stock moves and nothing is recorded.
+	 *
+	 * A reversal already recorded under the same reversalid is not applied again.
+	 *
+	 * @param	User	$user			User the API call runs as
+	 * @param	int		$noporderid		Order id on the nopCommerce side, previously recorded as completed
+	 * @param	string	$reversalid		Id of this cancellation/refund/return on the nopCommerce side. Makes a replay idempotent
+	 * @param	array<int,array<string,mixed>>	$items	Items to reverse: productid, quantity. Empty to reverse everything still outstanding
+	 * @return	int<-3,1>				1 if applied, 0 if this reversal was already recorded, -1 on a database or stock movement error, -2 if the order is not recorded as completed, -3 if an item asks for more than remains outstanding
+	 */
+	public function reverseOrder(User $user, $noporderid, $reversalid, array $items)
+	{
+		global $langs;
+
+		$langs->loadLangs(array('nopcommerce@nopcommerce'));
+
+		$this->reversalid = 0;
+		$this->reverseditems = array();
+
+		$warehouseid = getDolGlobalInt('NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID');
+		if ($warehouseid <= 0) {
+			$this->error = $langs->transnoentitiesnoconv('NopCommerceWebshopWarehouseNotSet');
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		$completedid = $this->fetchCompletedOrderId($noporderid);
+		if ($completedid < 0) {
+			return -1;
+		}
+		if ($completedid == 0) {
+			$this->error = $langs->transnoentitiesnoconv('NopCommerceOrderNotFound', $noporderid);
+			$this->errors[] = $this->error;
+			return -2;
+		}
+		$this->completedorderid = $completedid;
+
+		$label = $langs->transnoentitiesnoconv('NopCommerceOrderReversalMovementLabel', $noporderid, $reversalid);
+		$now = dol_now();
+
+		$this->db->begin();
+
+		$sql = "INSERT INTO ".$this->db->prefix()."nop_order_reversal (fk_nop_order_completed, nop_reversal_id, date_creation)";
+		$sql .= " VALUES (".$completedid.", '".$this->db->escape($reversalid)."', '".$this->db->idate($now)."')";
+
+		if (!$this->db->query($sql)) {
+			$alreadyexists = ($this->db->lasterrno() == 'DB_ERROR_RECORD_ALREADY_EXISTS');
+			$this->error = $this->db->lasterror();
+			$this->db->rollback();
+			if ($alreadyexists) {
+				$this->error = '';
+				$this->reversalid = max(0, $this->fetchReversalId($completedid, $reversalid));
+				return 0;
+			}
+			$this->errors[] = $this->error;
+			return -1;
+		}
+		$reversalrowid = (int) $this->db->last_insert_id($this->db->prefix()."nop_order_reversal");
+		$inventorycode = 'NOPREVERSAL-'.((int) $noporderid).'-'.$reversalrowid;
+
+		if (empty($items)) {
+			$plan = $this->planFullReversal($completedid);
+			if ($plan === false) {
+				$this->db->rollback();
+				return -1;
+			}
+		} else {
+			$plan = array();
+			foreach ($items as $item) {
+				$nopproductid = (int) $item['productid'];
+				$qty = (int) $item['quantity'];
+
+				$applied = $this->planItemReversal($completedid, $nopproductid, $qty, $plan);
+				if ($applied < 0) {
+					$this->db->rollback();
+					return $applied;
+				}
+			}
+		}
+
+		foreach ($plan as $entry) {
+			$movement = new MouvementStock($this->db);
+			$movementid = $movement->reception($user, $entry['fk_product'], $warehouseid, $entry['qty'], 0, $label, '', '', '', '', 0, $inventorycode);
+			if ($movementid < 0) {
+				$this->error = $movement->error;
+				$this->errors = array_merge($this->errors, $movement->errors);
+				$this->db->rollback();
+				return -1;
+			}
+
+			$sqlupd = "UPDATE ".$this->db->prefix()."nop_order_complete_items";
+			$sqlupd .= " SET qty_reversed = qty_reversed + ".((int) $entry['qty']);
+			$sqlupd .= " WHERE rowid = ".((int) $entry['rowid']);
+
+			if (!$this->db->query($sqlupd)) {
+				$this->error = $this->db->lasterror();
+				$this->errors[] = $this->error;
+				$this->db->rollback();
+				return -1;
+			}
+
+			$sqlins = "INSERT INTO ".$this->db->prefix()."nop_order_reversal_items (fk_nop_order_reversal, fk_product, nop_external_id, qty, date_creation)";
+			$sqlins .= " VALUES (".$reversalrowid.", ".((int) $entry['fk_product']).", ".($entry['nop_external_id'] !== null ? (int) $entry['nop_external_id'] : 'NULL').", ".((int) $entry['qty']).", '".$this->db->idate($now)."')";
+
+			if (!$this->db->query($sqlins)) {
+				$this->error = $this->db->lasterror();
+				$this->errors[] = $this->error;
+				$this->db->rollback();
+				return -1;
+			}
+
+			$this->reverseditems[] = array(
+				'productid' => $entry['nop_external_id'],
+				'quantity' => (int) $entry['qty'],
+				'fk_product' => (int) $entry['fk_product'],
+				'stock_movement_id' => (int) $movementid,
+				'stock_in_webshop_warehouse' => $this->getStockInWarehouse($entry['fk_product'], $warehouseid),
+			);
+		}
+
+		$this->db->commit();
+
+		$this->reversalid = $reversalrowid;
+
+		return 1;
+	}
+
+	/**
+	 * Build the reversal plan for every item of an order that still has an outstanding
+	 * quantity, locking the rows until the transaction ends.
+	 *
+	 * @param	int		$completedid	Row id of llx_nop_order_completed
+	 * @return	array<int,array<string,mixed>>|false	Plan keyed by item row id, false on a database error
+	 */
+	private function planFullReversal($completedid)
+	{
+		$plan = array();
+
+		$sql = "SELECT rowid, fk_product, nop_external_id, qty, qty_reversed FROM ".$this->db->prefix()."nop_order_complete_items";
+		$sql .= " WHERE fk_nop_order_completed = ".((int) $completedid);
+		$sql .= " AND qty > qty_reversed";
+		$sql .= " ORDER BY rowid ASC";
+		$sql .= " FOR UPDATE";
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return false;
+		}
+
+		while ($obj = $this->db->fetch_object($resql)) {
+			$remaining = ((int) $obj->qty) - ((int) $obj->qty_reversed);
+			if ($remaining <= 0) {
+				continue;
+			}
+			$plan[(int) $obj->rowid] = array(
+				'rowid' => (int) $obj->rowid,
+				'fk_product' => (int) $obj->fk_product,
+				'nop_external_id' => $obj->nop_external_id !== null ? (int) $obj->nop_external_id : null,
+				'qty' => $remaining,
+			);
+		}
+
+		return $plan;
+	}
+
+	/**
+	 * Add the reversal of one requested item to the plan, spending the outstanding
+	 * quantity of the matching item rows of the order oldest first, locking the rows
+	 * until the transaction ends.
+	 *
+	 * Matches on the nopCommerce product id recorded at completion time
+	 * (`nop_external_id`), the same value the request carries, so no catalog lookup is
+	 * needed: the product was already resolved once, when the order was completed.
+	 *
+	 * @param	int							$completedid	Row id of llx_nop_order_completed
+	 * @param	int							$nopproductid	Product id on the nopCommerce side
+	 * @param	int							$qtyneeded		Quantity to reverse for this item
+	 * @param	array<int,array<string,mixed>>	$plan		Plan being built, keyed by item row id. Modified in place
+	 * @return	int<-3,0>									0 on success, -1 on a database error, -3 if not enough remains outstanding
+	 */
+	private function planItemReversal($completedid, $nopproductid, $qtyneeded, array &$plan)
+	{
+		global $langs;
+
+		$sql = "SELECT rowid, fk_product, nop_external_id, qty, qty_reversed FROM ".$this->db->prefix()."nop_order_complete_items";
+		$sql .= " WHERE fk_nop_order_completed = ".((int) $completedid);
+		$sql .= " AND nop_external_id = ".((int) $nopproductid);
+		$sql .= " AND qty > qty_reversed";
+		$sql .= " ORDER BY rowid ASC";
+		$sql .= " FOR UPDATE";
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		$remainingneeded = $qtyneeded;
+		while ($remainingneeded > 0 && ($obj = $this->db->fetch_object($resql))) {
+			$rowid = (int) $obj->rowid;
+			$alreadyplanned = isset($plan[$rowid]) ? $plan[$rowid]['qty'] : 0;
+			$available = ((int) $obj->qty) - ((int) $obj->qty_reversed) - $alreadyplanned;
+			if ($available <= 0) {
+				continue;
+			}
+			$take = min($available, $remainingneeded);
+
+			if (!isset($plan[$rowid])) {
+				$plan[$rowid] = array(
+					'rowid' => $rowid,
+					'fk_product' => (int) $obj->fk_product,
+					'nop_external_id' => $obj->nop_external_id !== null ? (int) $obj->nop_external_id : null,
+					'qty' => 0,
+				);
+			}
+			$plan[$rowid]['qty'] += $take;
+			$remainingneeded -= $take;
+		}
+
+		if ($remainingneeded > 0) {
+			$this->error = $langs->transnoentitiesnoconv('NopCommerceNotEnoughRecordedToReverse', $nopproductid, ($qtyneeded - $remainingneeded), $qtyneeded);
+			$this->errors[] = $this->error;
+			return -3;
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Return the row id of a reversal already recorded for an order.
+	 *
+	 * @param	int		$completedid	Row id of llx_nop_order_completed
+	 * @param	string	$reversalid		Id of the reversal on the nopCommerce side
+	 * @return	int						Row id of llx_nop_order_reversal, 0 if not recorded, -1 on error
+	 */
+	public function fetchReversalId($completedid, $reversalid)
+	{
+		$sql = "SELECT rowid FROM ".$this->db->prefix()."nop_order_reversal";
+		$sql .= " WHERE fk_nop_order_completed = ".((int) $completedid);
+		$sql .= " AND nop_reversal_id = '".$this->db->escape($reversalid)."'";
 
 		$resql = $this->db->query($sql);
 		if (!$resql) {

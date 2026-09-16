@@ -378,6 +378,104 @@ class NopCommerce extends DolibarrApi
 	}
 
 	/**
+	 * Reverse a completed order
+	 *
+	 * nopCommerce calls this when an order previously reported to /order_completed is
+	 * cancelled, refunded, or its goods are returned and accepted. Dolibarr puts the
+	 * quantities back into the webshop warehouse (`NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID`),
+	 * either for the whole order or for the specific items and quantities given, and
+	 * never for more than that order still has outstanding for an item.
+	 *
+	 * It is all or nothing: if one item asks for more than remains outstanding, no stock
+	 * moves and nothing is recorded.
+	 *
+	 * Body:
+	 *     {
+	 *       "orderid": 1001,
+	 *       "reversalid": "RET-4821",
+	 *       "items": [
+	 *         {"productid": 55, "quantity": 1}
+	 *       ]
+	 *     }
+	 *
+	 * `items` is matched on the nopCommerce product id recorded when the order was
+	 * completed, not re-resolved through the catalog. Omit it, or send an empty array, to
+	 * reverse everything the order still has outstanding.
+	 *
+	 * Calling it twice with the same reversalid is safe: a reversal already recorded
+	 * under that id answers already_reversed without touching the stock again. A
+	 * different reversalid on the same order applies on top of an earlier one, as long
+	 * as it does not ask for more than remains outstanding.
+	 *
+	 * @param	array	$request_data	Reversal sent by nopCommerce
+	 * @return	array<string,mixed>		Recorded reversal with the product and remaining stock of each item
+	 *
+	 * @url	POST order_reversal
+	 *
+	 * @throws RestException 400 Bad Request
+	 * @throws RestException 403 Not allowed
+	 * @throws RestException 404 Not found
+	 * @throws RestException 409 Conflict
+	 * @throws RestException 500 Internal Server Error
+	 */
+	public function orderReversal($request_data = null)
+	{
+		if (!DolibarrApiAccess::$user->hasRight('nopcommerce', 'sync')) {
+			throw new RestException(403, 'Access to the nopCommerce sync API not allowed for login '.DolibarrApiAccess::$user->login);
+		}
+		if (!is_array($request_data)) {
+			throw new RestException(400, 'A JSON body is required');
+		}
+
+		$noporderid = isset($request_data['orderid']) ? (int) $request_data['orderid'] : 0;
+		if ($noporderid <= 0) {
+			throw new RestException(400, 'Field orderid is required in the body and has to be a positive integer');
+		}
+		$reversalid = isset($request_data['reversalid']) ? trim((string) $request_data['reversalid']) : '';
+		if ($reversalid === '') {
+			throw new RestException(400, 'Field reversalid is required in the body and cannot be empty');
+		}
+
+		$items = array();
+		if (!empty($request_data['items'])) {
+			if (!is_array($request_data['items'])) {
+				throw new RestException(400, 'Field items has to be an array when present');
+			}
+			foreach ($request_data['items'] as $index => $item) {
+				if (!is_array($item) || empty($item['productid']) || (int) $item['productid'] <= 0) {
+					throw new RestException(400, 'Item '.$index.': productid is required and has to be a positive integer');
+				}
+				if (!isset($item['quantity']) || (int) $item['quantity'] <= 0) {
+					throw new RestException(400, 'Item '.$index.': quantity has to be greater than zero');
+				}
+			}
+			$items = array_values($request_data['items']);
+		}
+
+		$result = $this->sync->reverseOrder(DolibarrApiAccess::$user, $noporderid, $reversalid, $items);
+		if ($result == -2) {
+			throw new RestException(404, 'Order '.$noporderid.' was not reversed: '.$this->sync->error);
+		}
+		if ($result == -3) {
+			throw new RestException(409, 'Order '.$noporderid.' was not reversed: '.$this->sync->error);
+		}
+		if ($result < 0) {
+			throw new RestException(500, 'Failed to reverse order '.$noporderid.': '.$this->sync->error);
+		}
+
+		return array(
+			'order_id' => $noporderid,
+			'completed_id' => (int) $this->sync->completedorderid,
+			'reversal_id' => $reversalid,
+			'already_reversed' => ($result == 0),
+			'message' => $result == 0
+				? 'Reversal was already recorded, nothing was changed'
+				: 'Entry stock movement written into the webshop warehouse and reversal recorded',
+			'items' => $this->sync->reverseditems,
+		);
+	}
+
+	/**
 	 * Turn the lines of the body into a map keyed by line id.
 	 *
 	 * @param	array<string,mixed>				$request_data	Body of the acknowledgement

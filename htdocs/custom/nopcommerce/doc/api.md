@@ -282,11 +282,98 @@ nothing is recorded. Sending an order that is already recorded answers `200` wit
 | 409 | The webshop warehouse lacks the stock for an item. Nothing was applied |
 | 500 | Webshop warehouse not configured, or the stock movement or database write failed |
 
+## Reversing a completed order: `POST /order_reversal`
+
+Undoes an order previously reported to `/order_completed`, in whole or in part: a
+cancellation, a refund, or goods returned and accepted. Dolibarr writes an **entry**
+stock movement back into the webshop warehouse (`NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID`).
+
+```json
+{
+  "orderid": 1001,
+  "reversalid": "RET-4821",
+  "items": [
+    {"productid": 55, "quantity": 1}
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `orderid` | yes | The nopCommerce order id, previously recorded by `/order_completed` |
+| `reversalid` | yes | Id of this cancellation/refund/return on the nopCommerce side. Replaying the same value is what makes the call idempotent — a different value on the same order is a separate, additional reversal |
+| `items` | no | `productid` and `quantity` to reverse. Omit it, or send an empty array, to reverse everything the order still has outstanding |
+
+`items[].productid` is matched against the nopCommerce product id recorded at
+completion time (`nop_external_id` on `llx_nop_order_complete_items`), **not**
+re-resolved through the product catalog: the product was already resolved once, when
+the order was completed, so the reversal only has to find that same recorded row again.
+
+For each item Dolibarr:
+
+1. finds the completed order's recorded item rows carrying that `productid`,
+2. refuses if the quantity asked for is more than those rows still have outstanding
+   (original `qty` minus what earlier reversals already took off it),
+3. writes an entry stock movement for the quantity taken (inventory code
+   `NOPREVERSAL-<orderid>-<reversal row id>`),
+4. adds that quantity to `qty_reversed` on the recorded item rows it drew from, so a
+   later, separate reversal sees what is left.
+
+All of it runs in a single database transaction. If any item asks for more than remains
+outstanding, no stock moves and nothing is recorded. Sending a reversal already recorded
+under the same `reversalid` answers `200` with `already_reversed: true` and changes
+nothing.
+
+```json
+{
+  "order_id": 1001,
+  "completed_id": 7,
+  "reversal_id": "RET-4821",
+  "already_reversed": false,
+  "message": "Entry stock movement written into the webshop warehouse and reversal recorded",
+  "items": [
+    {"productid": 55, "quantity": 1,
+     "fk_product": 5, "stock_movement_id": 900, "stock_in_webshop_warehouse": 4}
+  ]
+}
+```
+
+| Code | When |
+|---|---|
+| 400 | No JSON body, `orderid` or `reversalid` missing, or an item without `productid` or a positive `quantity` |
+| 403 | The API key holds no `nopcommerce->sync` permission |
+| 404 | No order with that `orderid` is recorded as completed. Nothing was applied |
+| 409 | An item asks for more than remains outstanding for it. Nothing was applied |
+| 500 | Webshop warehouse not configured, or the stock movement or database write failed |
+
+An order recorded before this endpoint existed has `qty = 0` on its item rows (the
+quantity was never captured), so a reversal against it correctly finds nothing
+outstanding rather than guessing a quantity — see
+[`sql/llx_nop_order_complete_items_qty.sql`](../sql/llx_nop_order_complete_items_qty.sql).
+
 ## Known limitation: the sync is one-directional
 
-Only stock moving **into** the webshop warehouse is reported. Moving stock back out — a
-return to the parent warehouse, a correction — tells this API nothing, so the shop will
-still believe the earlier quantity is available and can oversell.
+`/order_completed` only ever takes stock out, and until now there was no way to tell
+Dolibarr that a shop order was cancelled, refunded, or its goods returned and accepted:
+the ERP would write off goods that never left the shop, and returned stock could never
+become sellable again. `/order_reversal` above closes that gap for orders reported
+through `/order_completed`.
+
+What is still one-directional: only stock moving **into** the webshop warehouse through
+a transfer is reported. Moving stock back out by a native Dolibarr stock transfer to the
+parent warehouse — a correction unrelated to a shop order — tells this API nothing, so
+the shop will still believe the earlier quantity is available and can oversell. Reverse
+that kind of movement with a stock transfer in the other direction on the Dolibarr side;
+there is nothing for nopCommerce to call for it.
+
+`/order_reversal` also matches purely on the nopCommerce product id recorded at
+completion time, not re-resolved through the catalog. If a single order recorded two
+different variants under the same id (the comment on `resolveOrderLineProduct` in
+`nopcommercesync.class.php` notes this can happen when variants clone their parent's
+external id), a partial reversal spends the oldest outstanding row first rather than
+picking a specific variant. It never reverses more than was recorded in total for that
+id, but which of the two variants gets its stock back first is not guaranteed to be the
+one nopCommerce meant.
 
 `stock_in_webshop_warehouse` in the pull payload is a snapshot taken at pull time, so a
 warehouse with no new transfers never refreshes. If your shop needs authoritative stock

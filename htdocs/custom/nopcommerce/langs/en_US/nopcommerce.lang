@@ -108,3 +108,18 @@ NopCommerceProductAmbiguous = Several products have the nopCommerce external id 
 NopCommerceVariantValueRequired = The product with nopCommerce external id %s has variants, so the attribute value is required
 NopCommerceVariantNotFound = The product with nopCommerce external id %s has no variant %s %s
 NopCommerceVariantAmbiguous = The product with nopCommerce external id %s has several variants matching %s %s
+
+# Order reversal
+NopCommerceOrderReversalMovementLabel = nopCommerce order %s reversal %s
+NopCommerceOrderNotFound = No order with nopCommerce order id %s is recorded as completed
+NopCommerceNotEnoughRecordedToReverse = Product id %s has only %s left outstanding, the reversal asks for %s
+
+# Completed order list
+NopCommerceCompletedOrders = Completed orders
+NopCommerceCompletedOrdersHint = Orders nopCommerce reported as completed. Their products were taken out of the webshop warehouse. Click an order to see them.
+NopCommerceOrderId = nopCommerce order
+NopCommerceOrderProductCount = Products
+NopCommerceOrderProducts = Products of order %s
+NopCommerceShowOrderProducts = Show the products of this order
+NopCommerceNoCompletedOrderYet = No order has been reported as completed by nopCommerce yet
+NopCommerceNoProductOnThisOrder = No product was recorded on this order
