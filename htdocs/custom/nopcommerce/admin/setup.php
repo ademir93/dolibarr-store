@@ -190,6 +190,8 @@ $endpoints = array(
 	'POST' => array(
 		$apibase.'/transfers/{id}/ack',
 		$apibase.'/order_completed',
+		$apibase.'/order_reversal',
+		$apibase.'/sales',
 	),
 );
 foreach ($endpoints as $method => $urls) {

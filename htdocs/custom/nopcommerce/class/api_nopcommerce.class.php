@@ -34,7 +34,9 @@ dol_include_once('/nopcommerce/class/nopcommercesync.class.php');
  * Dolibarr never calls the webshop. nopCommerce polls GET /nopcommerce/transfers/pending,
  * writes the products on its own side, then calls POST /nopcommerce/transfers/{id}/ack.
  * The stock is moved and the sync flag is raised only when that acknowledgement reports
- * a success.
+ * a success. The other direction works the same way in spirit: nopCommerce reports what
+ * it sold through POST /nopcommerce/order_completed (live today) or POST /nopcommerce/sales
+ * (the contract to prefer), and Dolibarr takes the stock out of the webshop warehouse.
  *
  * @access protected
  * @class  DolibarrApiAccess {@requires user,external}
@@ -296,30 +298,36 @@ class NopCommerce extends DolibarrApi
 	}
 
 	/**
-	 * Report a completed order
+	 * Report sold lines
 	 *
-	 * nopCommerce calls this when an order is completed, with the products it sold.
+	 * nopCommerce calls this when an order is paid, with every line it sold. This is the
+	 * endpoint carrying live traffic today: the request body is a **bare JSON array**, one
+	 * entry per sold line, each entry carrying its own orderid rather than a shared
+	 * envelope. In practice every entry of one call shares the same orderid, since
+	 * nopCommerce reports one order at a time, but nothing here assumes that: lines are
+	 * grouped by orderid before being applied, so a call mixing several orders is handled
+	 * correctly too.
+	 *
 	 * Dolibarr finds each product by its nopCommerce external id (the product extrafield
 	 * nopcommerce_external_id), picks the variant carrying the sold attribute value, such
-	 * as Size = M, and takes the quantity out of the webshop warehouse. The order and its
-	 * items are then recorded.
+	 * as Size = M, and takes the quantity out of the webshop warehouse.
 	 *
-	 * It is all or nothing: if one item matches no product or variant, or the webshop
-	 * warehouse lacks its stock, no stock moves and nothing is recorded.
+	 * For each order it is all or nothing: if one of its lines matches no product or
+	 * variant, or the webshop warehouse lacks its stock, no stock moves and nothing is
+	 * recorded for that order. Orders in the same call are independent of each other: an
+	 * earlier order that applied successfully stays applied even if a later one in the
+	 * same call fails, and the call stops at the first order that fails.
 	 *
 	 * Body:
-	 *     {
-	 *       "orderid": 1001,
-	 *       "items": [
-	 *         {"productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2}
-	 *       ]
-	 *     }
+	 *     [
+	 *       {"orderid": 1001, "productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2}
+	 *     ]
 	 *
-	 * Calling it twice for the same order is safe: an order already recorded answers
+	 * Reporting the same order twice is safe: an order already recorded answers
 	 * already_completed without touching the stock again.
 	 *
-	 * @param	array	$request_data	Completed order sent by nopCommerce
-	 * @return	array<string,mixed>		Recorded order with the product and remaining stock of each item
+	 * @param	array	$request_data	Sold lines sent by nopCommerce, one entry per line
+	 * @return	array<string,mixed>		One entry per order applied or found already recorded
 	 *
 	 * @url	POST order_completed
 	 *
@@ -334,46 +342,141 @@ class NopCommerce extends DolibarrApi
 		if (!DolibarrApiAccess::$user->hasRight('nopcommerce', 'sync')) {
 			throw new RestException(403, 'Access to the nopCommerce sync API not allowed for login '.DolibarrApiAccess::$user->login);
 		}
-		if (!is_array($request_data)) {
-			throw new RestException(400, 'A JSON body is required');
+		if (!is_array($request_data) || empty($request_data)) {
+			throw new RestException(400, 'A JSON array of sold lines is required');
 		}
 
-		$noporderid = isset($request_data['orderid']) ? (int) $request_data['orderid'] : 0;
-		if ($noporderid <= 0) {
-			throw new RestException(400, 'Field orderid is required in the body and has to be a positive integer');
-		}
-		if (empty($request_data['items']) || !is_array($request_data['items'])) {
-			throw new RestException(400, 'Field items is required in the body and has to hold at least one product');
-		}
-
-		foreach ($request_data['items'] as $index => $item) {
-			if (!is_array($item) || empty($item['productid']) || (int) $item['productid'] <= 0) {
-				throw new RestException(400, 'Item '.$index.': productid is required and has to be a positive integer');
+		$byorder = array();
+		foreach ($request_data as $index => $item) {
+			if (!is_array($item)) {
+				throw new RestException(400, 'Line '.$index.': expected a JSON object');
+			}
+			$orderid = isset($item['orderid']) ? (int) $item['orderid'] : 0;
+			if ($orderid <= 0) {
+				throw new RestException(400, 'Line '.$index.': orderid is required and has to be a positive integer');
+			}
+			if (empty($item['productid']) || (int) $item['productid'] <= 0) {
+				throw new RestException(400, 'Line '.$index.': productid is required and has to be a positive integer');
 			}
 			if (!isset($item['quantity']) || (int) $item['quantity'] <= 0) {
-				throw new RestException(400, 'Item '.$index.': quantity has to be greater than zero');
+				throw new RestException(400, 'Line '.$index.': quantity has to be greater than zero');
 			}
+			$byorder[$orderid][] = $item;
 		}
 
-		$result = $this->sync->syncProduct(DolibarrApiAccess::$user, $noporderid, array_values($request_data['items']));
-		if ($result == -2) {
-			throw new RestException(404, 'Order '.$noporderid.' was not applied: '.$this->sync->error);
+		$orders = array();
+		foreach ($byorder as $orderid => $items) {
+			$result = $this->sync->syncProduct(DolibarrApiAccess::$user, $orderid, array_values($items));
+			if ($result == -2) {
+				throw new RestException(404, 'Order '.$orderid.' was not applied: '.$this->sync->error);
+			}
+			if ($result == -3) {
+				throw new RestException(409, 'Order '.$orderid.' was not applied: '.$this->sync->error);
+			}
+			if ($result < 0) {
+				throw new RestException(500, 'Failed to apply order '.$orderid.': '.$this->sync->error);
+			}
+
+			$orders[] = array(
+				'order_id' => $orderid,
+				'completed_id' => (int) $this->sync->completedorderid,
+				'already_completed' => ($result == 0),
+				'message' => $result == 0
+					? 'Order was already recorded, nothing was changed'
+					: 'Stock taken out of the webshop warehouse and order recorded',
+				'items' => $this->sync->completeditems,
+			);
 		}
-		if ($result == -3) {
-			throw new RestException(409, 'Order '.$noporderid.' was not applied: '.$this->sync->error);
+
+		return array('orders' => $orders);
+	}
+
+	/**
+	 * Report sold lines, the specced and safer contract
+	 *
+	 * The contract to prefer once nopCommerce switches over from /order_completed (see
+	 * docs/dolibarr-side-integration-tasks.md, "Open decision"): dolibarr_product_id is
+	 * already a Dolibarr id, so unlike /order_completed no catalog lookup through the
+	 * external id extrafield is needed, and nop_order_item_id is a real per-line
+	 * idempotency key rather than a best-effort dedupe.
+	 *
+	 * Every line is independent: one line failing never rolls back or blocks any other
+	 * line of the same batch, so a partial-batch failure never costs the lines that did
+	 * succeed. high_watermark advances through the lines in the order they were sent,
+	 * stopping at the first line that is not applied or already_applied — send lines in
+	 * ascending nop_order_item_id order for it to mean what a batched-retry caller expects
+	 * (safe to resume the next call from high_watermark + 1).
+	 *
+	 * Body:
+	 *     {
+	 *       "lines": [
+	 *         {"nop_order_item_id": 55231, "dolibarr_product_id": 778, "qty": 1, "sold_at": "2026-09-13T10:04:00+00:00"}
+	 *       ]
+	 *     }
+	 *
+	 * Calling it twice with the same nop_order_item_id is safe: a line already recorded
+	 * answers already_applied without touching the stock again.
+	 *
+	 * @param	array	$request_data	Sold lines sent by nopCommerce
+	 * @return	array<string,mixed>		high_watermark and the per-line result
+	 *
+	 * @url	POST sales
+	 *
+	 * @throws RestException 400 Bad Request
+	 * @throws RestException 403 Not allowed
+	 */
+	public function sales($request_data = null)
+	{
+		if (!DolibarrApiAccess::$user->hasRight('nopcommerce', 'sync')) {
+			throw new RestException(403, 'Access to the nopCommerce sync API not allowed for login '.DolibarrApiAccess::$user->login);
 		}
-		if ($result < 0) {
-			throw new RestException(500, 'Failed to apply order '.$noporderid.': '.$this->sync->error);
+		if (!is_array($request_data) || !isset($request_data['lines']) || !is_array($request_data['lines']) || empty($request_data['lines'])) {
+			throw new RestException(400, 'Field lines is required in the body and has to hold at least one line');
+		}
+
+		$results = array();
+		$highwatermark = 0;
+		$stopped = false;
+
+		foreach ($request_data['lines'] as $index => $line) {
+			if (!is_array($line)) {
+				throw new RestException(400, 'Line '.$index.': expected a JSON object');
+			}
+
+			$noporderitemid = isset($line['nop_order_item_id']) ? (int) $line['nop_order_item_id'] : 0;
+			$dolibarrproductid = isset($line['dolibarr_product_id']) ? (int) $line['dolibarr_product_id'] : 0;
+			$qty = isset($line['qty']) ? (int) $line['qty'] : 0;
+			$soldat = isset($line['sold_at']) ? (string) $line['sold_at'] : '';
+			$soldattimestamp = ($soldat !== '') ? strtotime($soldat) : false;
+
+			if ($noporderitemid <= 0 || $dolibarrproductid <= 0 || $qty <= 0 || $soldattimestamp === false) {
+				$results[] = array(
+					'nop_order_item_id' => $noporderitemid,
+					'status' => 'failed',
+					'error' => 'nop_order_item_id, dolibarr_product_id and qty must be positive integers, and sold_at has to be a parseable ISO-8601 timestamp',
+				);
+				$stopped = true;
+				continue;
+			}
+
+			$applied = $this->sync->applySalesLine(DolibarrApiAccess::$user, $noporderitemid, $dolibarrproductid, $qty, $soldattimestamp);
+
+			$results[] = array(
+				'nop_order_item_id' => $noporderitemid,
+				'status' => $applied['status'],
+				'error' => $applied['error'],
+			);
+
+			if ($applied['status'] === 'failed') {
+				$stopped = true;
+			} elseif (!$stopped) {
+				$highwatermark = $noporderitemid;
+			}
 		}
 
 		return array(
-			'order_id' => $noporderid,
-			'completed_id' => (int) $this->sync->completedorderid,
-			'already_completed' => ($result == 0),
-			'message' => $result == 0
-				? 'Order was already recorded, nothing was changed'
-				: 'Stock taken out of the webshop warehouse and order recorded',
-			'items' => $this->sync->completeditems,
+			'high_watermark' => $highwatermark,
+			'lines' => $results,
 		);
 	}
 

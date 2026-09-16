@@ -141,6 +141,12 @@ acknowledgement from being applied.
 }
 ```
 
+`weight` is always normalized to kilograms and `weight_units` is always `0`, whatever unit the
+product is weighed in on the Dolibarr side (kg, g, t, oz or lb). nopCommerce's own weight-unit
+handling is currently buggy for non-metric units — it would store a pound-denominated weight as if
+it were the same number of kilograms instead of converting it — so this endpoint does the conversion
+itself rather than relying on `weight_units` to be honoured on the other end.
+
 ### `GET /transfers/{id}`
 
 Reads one transfer whatever its status. Issues no pull token, so it is safe to call for
@@ -225,23 +231,29 @@ Calling the acknowledgement twice is safe. A transfer that is already `SYNCED` a
 | `NOPCOMMERCE_ACK_REQUIRE_TOKEN` | 1 | Require the `pull_token` on acknowledgement. Turn off only while testing |
 | `NOPCOMMERCE_ALLOW_NEGATIVE_SOURCE_STOCK` | 0 | Allow an acknowledgement to push the source warehouse below zero |
 
-## Completed orders: `POST /order_completed`
+## Completed orders (live traffic today): `POST /order_completed`
 
-The reverse direction. nopCommerce reports a completed order and Dolibarr takes the sold
-quantities out of the webshop warehouse (`NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID`).
+The reverse direction, and the only call the nopCommerce plugin actually fires today
+(synchronously, when an order is marked Paid). Dolibarr takes the sold quantities out of
+the webshop warehouse (`NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID`).
+
+The request body is a **bare JSON array**, not an envelope object: one entry per sold
+line, each entry carrying its own `orderid`. This is what the plugin's
+`DolibarrHttpClient.NotifyOrderCompletedAsync` actually serializes and posts.
 
 ```json
-{
-  "orderid": 1001,
-  "items": [
-    {"productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2}
-  ]
-}
+[
+  {"orderid": 1001, "productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2}
+]
 ```
 
-`orderid` is the nopCommerce order id. Each item is the plugin's `OrderProductLine`.
+`orderid` is the nopCommerce order id, `productid` the nopCommerce product id (see "Reverse
+mapping problem" below — it is **not** yet a Dolibarr id). In practice every entry of one
+call shares the same `orderid`, since the plugin reports one order at a time, but nothing
+on this side assumes that: entries are grouped by `orderid` before being applied, so a call
+mixing several orders is handled correctly too.
 
-For each item Dolibarr:
+For each order, for each of its lines, Dolibarr:
 
 1. finds the product whose extrafield `nopcommerce_external_id` equals `productid`.
    Creating variants copies the parent's extrafields, so variants holding the same id are
@@ -257,30 +269,113 @@ For each item Dolibarr:
 It then records the order in `llx_nop_order_completed` and one row per item in
 `llx_nop_order_complete_items`.
 
-All of it runs in a single database transaction. If any item fails, no stock moves and
-nothing is recorded. Sending an order that is already recorded answers `200` with
-`already_completed: true` and changes nothing.
+Each order is applied in its own database transaction: if one of its lines fails, no
+stock moves and nothing is recorded **for that order**, but an earlier order in the same
+call that already applied stays applied. The call stops at the first order that fails, so
+any order after it in the same call is not attempted. Sending an order that is already
+recorded answers `200` with `already_completed: true` for that order and changes nothing.
+
+The response is not read by the plugin today — only the HTTP status code is — but a real
+body is still returned so switching the caller over to reading it later is painless:
 
 ```json
 {
-  "order_id": 1001,
-  "completed_id": 7,
-  "already_completed": false,
-  "message": "Stock taken out of the webshop warehouse and order recorded",
-  "items": [
-    {"productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2,
-     "fk_product": 5, "stock_movement_id": 812, "stock_in_webshop_warehouse": 3}
+  "orders": [
+    {
+      "order_id": 1001,
+      "completed_id": 7,
+      "already_completed": false,
+      "message": "Stock taken out of the webshop warehouse and order recorded",
+      "items": [
+        {"productid": 55, "attribute": "Size", "attributeValue": "M", "quantity": 2,
+         "fk_product": 5, "stock_movement_id": 812, "stock_in_webshop_warehouse": 3}
+      ]
+    }
   ]
 }
 ```
 
 | Code | When |
 |---|---|
-| 400 | No JSON body, `orderid` missing, `items` empty, or an item without `productid` or a positive `quantity` |
+| 400 | No JSON body, the body is empty, an entry is not a JSON object, or an entry is missing `orderid`/`productid`/a positive `quantity` |
 | 403 | The API key holds no `nopcommerce->sync` permission |
-| 404 | An item matches no product, or no single variant. Nothing was applied |
-| 409 | The webshop warehouse lacks the stock for an item. Nothing was applied |
+| 404 | An item matches no product, or no single variant, for some order. Nothing was applied for that order or any order after it in the same call |
+| 409 | The webshop warehouse lacks the stock for an item of some order. Same effect as 404 |
 | 500 | Webshop warehouse not configured, or the stock movement or database write failed |
+
+**This endpoint is transitional.** `productid` is a nopCommerce id that this side has no
+reliable way to resolve unless `nopcommerce_external_id` was seeded (see "Reverse mapping
+problem" below), and `attribute`/`attributeValue` currently carry only the first attribute
+of a multi-attribute product — a known nopCommerce-side bug. `POST /sales` below is the
+contract to prefer once nopCommerce switches over.
+
+## Reverse mapping problem
+
+`order_completed` sends a **nopCommerce** product id (`productid`); `sales` sends a
+**Dolibarr** product id (`dolibarr_product_id`), so it needs no lookup. Resolving
+`order_completed`'s `productid` back to a Dolibarr product today relies entirely on the
+`nopcommerce_external_id` product extrafield being set — there is currently no automatic
+path from a `transfers/{id}/ack` call's `nop_product_id` (stored on
+`llx_nopcommerce_transferline`, see above) into that extrafield. Until nopCommerce's pull
+side sends real traffic, seed `nopcommerce_external_id` by hand or by SKU as a stopgap.
+
+## Sold lines, the contract to prefer: `POST /sales`
+
+Not yet called by nopCommerce (the plugin has this fully modeled in C# but no caller
+wired up yet) — build to spec, real traffic comes once nopCommerce switches over from
+`/order_completed`. Safer by construction: `dolibarr_product_id` is already a Dolibarr id
+(no catalog lookup, unlike `order_completed`'s `productid`), and `nop_order_item_id` is a
+real per-line idempotency key rather than a best-effort dedupe on a tuple of fields.
+
+```json
+{
+  "lines": [
+    {"nop_order_item_id": 55231, "dolibarr_product_id": 778, "qty": 1, "sold_at": "2026-09-13T10:04:00+00:00"}
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `nop_order_item_id` | nopCommerce's own order item id. The idempotency key: a line already recorded under this id answers `already_applied` and touches no stock |
+| `dolibarr_product_id` | Dolibarr product/variant id sold, taken as given |
+| `qty` | Quantity sold |
+| `sold_at` | ISO-8601 with a numeric offset. Stored as-is, not otherwise validated beyond being parseable |
+
+For each line, unless it is a replay, Dolibarr fetches the product, refuses if the webshop
+warehouse holds less than `qty` (unless `NOPCOMMERCE_ALLOW_NEGATIVE_SOURCE_STOCK` is on),
+and writes an exit stock movement (inventory code `NOPSALE-<nop_order_item_id>`) and one
+row in `llx_nop_sales_line`.
+
+**Lines are independent of each other.** Unlike `order_completed`'s all-or-nothing order,
+one line failing (unknown product, not enough stock, unparseable `sold_at`) never rolls
+back or blocks any other line of the same batch — each line is its own idempotency record
+and its own database transaction. A line that fails does **not** claim its
+`nop_order_item_id`, so a later retry of the same line (after the underlying problem is
+fixed) can still succeed.
+
+```json
+{
+  "high_watermark": 55231,
+  "lines": [
+    {"nop_order_item_id": 55231, "status": "applied", "error": null}
+  ]
+}
+```
+
+`status` is one of `applied`, `already_applied`, `failed`. `high_watermark` advances
+through the lines **in the order they were sent**, stopping at the first line that is not
+`applied` or `already_applied` — send lines in ascending `nop_order_item_id` order for it
+to mean what a batched-retry caller expects: it is always safe to resume the next call
+from `high_watermark + 1`, because nothing before it was skipped.
+
+| Code | When |
+|---|---|
+| 400 | No JSON body, `lines` missing/empty, or an entry is not a JSON object |
+| 403 | The API key holds no `nopcommerce->sync` permission |
+
+A line-level problem is reported as `status: "failed"` with an `error` message, not as an
+HTTP error — the call as a whole still answers `200` as long as the body itself is valid.
 
 ## Reversing a completed order: `POST /order_reversal`
 

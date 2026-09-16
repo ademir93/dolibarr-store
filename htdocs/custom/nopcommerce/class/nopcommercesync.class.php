@@ -221,8 +221,8 @@ class NopCommerceSync
 			'price' => (float) $product->price,
 			'price_ttc' => (float) $product->price_ttc,
 			'tva_tx' => (float) $product->tva_tx,
-			'weight' => (float) $product->weight,
-			'weight_units' => $product->weight_units,
+			'weight' => $this->convertWeightToKg((float) $product->weight, $product->weight_units),
+			'weight_units' => 0,
 			'is_variant' => !empty($line->fk_product_parent),
 			'parent' => null,
 			'attributes' => array(),
@@ -247,6 +247,36 @@ class NopCommerceSync
 		}
 
 		return $data;
+	}
+
+	/**
+	 * Convert a product weight to kilograms, whatever its Dolibarr measuring unit scale is.
+	 *
+	 * nopCommerce's weight-conversion code is currently buggy: it treats weight_units 99
+	 * (pound) as non-metric but doesn't actually convert it, so a pound-denominated weight
+	 * sent as-is would be stored on the webshop as if it were the same number of
+	 * kilograms. Normalizing to kilograms here, and always reporting weight_units 0, makes
+	 * that bug harmless regardless of what unit the product is priced/weighed in locally.
+	 *
+	 * @param	float		$weight			Weight in the product's own unit
+	 * @param	int|string	$weightunits	Product's weight_units scale: a power of ten below 50 (0 = kg, -3 = g, 3 = t, ...), or the non-metric codes 98 (ounce) / 99 (pound)
+	 * @return	float						Weight in kilograms
+	 */
+	public function convertWeightToKg($weight, $weightunits)
+	{
+		$weightunits = (int) $weightunits;
+
+		if ($weightunits >= 50) {
+			if ($weightunits == 99) {
+				return $weight * 0.45359237;
+			}
+			if ($weightunits == 98) {
+				return $weight * 0.0283495;
+			}
+			return $weight;
+		}
+
+		return $weight * (10 ** $weightunits);
 	}
 
 	/**
@@ -852,6 +882,123 @@ class NopCommerceSync
 		}
 
 		return mb_strtolower(trim((string) $stored), 'UTF-8') === mb_strtolower($sent, 'UTF-8');
+	}
+
+	/**
+	 * Apply one sold line reported through /sales.
+	 *
+	 * Unlike syncProduct(), dolibarr_product_id is already a Dolibarr id, so there is no
+	 * catalog lookup. The line is idempotent on nop_order_item_id: a line already recorded
+	 * is not applied again and answers already_applied without touching the stock. Unlike
+	 * a whole order reported to /order_completed, one line's failure never rolls back or
+	 * blocks any other line of the same batch, since each line is its own idempotency
+	 * record and its own database transaction.
+	 *
+	 * @param	User	$user				User the API call runs as
+	 * @param	int		$noporderitemid		nopCommerce order item id, the idempotency key
+	 * @param	int		$dolibarrproductid	Dolibarr product/variant id sold
+	 * @param	int		$qty				Quantity sold
+	 * @param	int		$soldattimestamp	Sale timestamp, as a unix timestamp
+	 * @return	array{status:string,error:?string}	status is one of applied, already_applied, failed
+	 */
+	public function applySalesLine(User $user, $noporderitemid, $dolibarrproductid, $qty, $soldattimestamp)
+	{
+		global $langs;
+
+		$langs->loadLangs(array('nopcommerce@nopcommerce'));
+
+		$existing = $this->fetchSalesLineId($noporderitemid);
+		if ($existing < 0) {
+			return array('status' => 'failed', 'error' => $this->error);
+		}
+		if ($existing > 0) {
+			return array('status' => 'already_applied', 'error' => null);
+		}
+
+		$warehouseid = getDolGlobalInt('NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID');
+		if ($warehouseid <= 0) {
+			return array('status' => 'failed', 'error' => $langs->transnoentitiesnoconv('NopCommerceWebshopWarehouseNotSet'));
+		}
+
+		$product = new Product($this->db);
+		if ($product->fetch((int) $dolibarrproductid) <= 0) {
+			return array('status' => 'failed', 'error' => $langs->transnoentitiesnoconv('NopCommerceSalesProductNotFound', $dolibarrproductid));
+		}
+
+		$allownegative = getDolGlobalInt('NOPCOMMERCE_ALLOW_NEGATIVE_SOURCE_STOCK');
+		$label = $langs->transnoentitiesnoconv('NopCommerceSalesMovementLabel', $noporderitemid);
+		$inventorycode = 'NOPSALE-'.((int) $noporderitemid);
+		$now = dol_now();
+
+		$this->db->begin();
+
+		// The line row goes in first, exactly like syncProduct() does for the order row: its
+		// unique key on nop_order_item_id makes a concurrent replay of the same line wait
+		// here and then find itself already applied, instead of taking the stock out twice.
+		$sql = "INSERT INTO ".$this->db->prefix()."nop_sales_line (nop_order_item_id, fk_product, qty, sold_at, date_creation)";
+		$sql .= " VALUES (".((int) $noporderitemid).", ".((int) $dolibarrproductid).", ".((int) $qty).", '".$this->db->idate($soldattimestamp)."', '".$this->db->idate($now)."')";
+
+		if (!$this->db->query($sql)) {
+			$alreadyexists = ($this->db->lasterrno() == 'DB_ERROR_RECORD_ALREADY_EXISTS');
+			$error = $this->db->lasterror();
+			$this->db->rollback();
+			if ($alreadyexists) {
+				return array('status' => 'already_applied', 'error' => null);
+			}
+			return array('status' => 'failed', 'error' => $error);
+		}
+		$lineid = (int) $this->db->last_insert_id($this->db->prefix()."nop_sales_line");
+
+		if (!$allownegative) {
+			$available = $this->getStockInWarehouse($dolibarrproductid, $warehouseid, true);
+			if ($available < $qty) {
+				$this->db->rollback();
+				return array('status' => 'failed', 'error' => $langs->transnoentitiesnoconv('NopCommerceNotEnoughStockInWebshop', $dolibarrproductid, $available, $qty));
+			}
+		}
+
+		$movement = new MouvementStock($this->db);
+		$movementid = $movement->livraison($user, (int) $dolibarrproductid, $warehouseid, (int) $qty, 0, $label, '', '', '', '', 0, $inventorycode);
+		if ($movementid < 0) {
+			$error = $movement->error;
+			$this->db->rollback();
+			return array('status' => 'failed', 'error' => $error);
+		}
+
+		$sqlupd = "UPDATE ".$this->db->prefix()."nop_sales_line SET fk_mouvement = ".((int) $movementid);
+		$sqlupd .= " WHERE rowid = ".$lineid;
+
+		if (!$this->db->query($sqlupd)) {
+			$error = $this->db->lasterror();
+			$this->db->rollback();
+			return array('status' => 'failed', 'error' => $error);
+		}
+
+		$this->db->commit();
+
+		return array('status' => 'applied', 'error' => null);
+	}
+
+	/**
+	 * Return the row id of a sales line already recorded.
+	 *
+	 * @param	int		$noporderitemid		nopCommerce order item id
+	 * @return	int							Row id of llx_nop_sales_line, 0 if not recorded, -1 on error
+	 */
+	public function fetchSalesLineId($noporderitemid)
+	{
+		$sql = "SELECT rowid FROM ".$this->db->prefix()."nop_sales_line";
+		$sql .= " WHERE nop_order_item_id = ".((int) $noporderitemid);
+
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+		$obj = $this->db->fetch_object($resql);
+
+		return $obj ? (int) $obj->rowid : 0;
 	}
 
 	/**

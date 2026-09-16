@@ -511,4 +511,54 @@ class NopCommerceCaptureTest extends CommonClassTest
 		$this->assertSame(NopCommerceTransfer::ORIGIN_NATIVE, $payload['origin'], 'A captured transfer reports the native origin');
 		$this->assertTrue($payload['stock_already_moved'], 'A captured transfer has already moved its stock');
 	}
+
+	/**
+	 * The pulled payload always reports weight in kilograms with weight_units 0, whatever
+	 * unit the product is weighed in on the Dolibarr side. nopCommerce's own weight_units
+	 * handling is buggy for non-metric units (see docs/dolibarr-side-integration-tasks.md),
+	 * so normalizing here rather than trusting weight_units on the other end is what keeps
+	 * a pound- or gram-denominated product from being stored as the wrong number of
+	 * kilograms on the webshop.
+	 *
+	 * @return void
+	 */
+	public function testPayloadNormalizesWeightToKilograms()
+	{
+		global $db, $user;
+		$db = $this->savdb;
+
+		require_once dirname(__FILE__).'/../class/nopcommercesync.class.php';
+
+		$source = $this->makeWarehouse('wt-src');
+		$dest = $this->makeWarehouse('wt-dst');
+		$sync = new NopCommerceSync($db);
+
+		$pounds = $this->makeProduct('wt-lb');
+		$pounds->weight = 2;
+		$pounds->weight_units = 99; // pound, see llx_c_units
+		$this->assertGreaterThan(0, $pounds->update($user), 'Failed to set the weight: '.$pounds->error);
+
+		$grams = $this->makeProduct('wt-g');
+		$grams->weight = 500;
+		$grams->weight_units = -3; // gram, see llx_c_units
+		$this->assertGreaterThan(0, $grams->update($user), 'Failed to set the weight: '.$grams->error);
+
+		$cases = array(
+			array($pounds, 0.45359237 * 2),
+			array($grams, 0.5),
+		);
+		foreach ($cases as $case) {
+			list($product, $expectedkg) = $case;
+			$transfer = new NopCommerceTransfer($db);
+			$transfer->fk_warehouse_source = $source;
+			$transfer->fk_warehouse_destination = $dest;
+			$this->assertGreaterThan(0, $transfer->create($user), 'create failed: '.$transfer->error);
+			$this->assertGreaterThan(0, $transfer->addLine($user, $product->id, 1.0, ''), 'addLine failed: '.$transfer->error);
+			$this->assertGreaterThan(0, $transfer->fetchLines(), 'Failed to reload the lines');
+
+			$payload = $sync->buildTransferPayload($transfer);
+			$this->assertEqualsWithDelta($expectedkg, $payload['lines'][0]['weight'], 0.0001, 'The weight of '.$product->ref.' must be normalized to kilograms');
+			$this->assertSame(0, $payload['lines'][0]['weight_units'], 'weight_units must always be reported as kilograms');
+		}
+	}
 }

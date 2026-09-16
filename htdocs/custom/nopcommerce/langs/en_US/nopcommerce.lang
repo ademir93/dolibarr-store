@@ -114,6 +114,10 @@ NopCommerceOrderReversalMovementLabel = nopCommerce order %s reversal %s
 NopCommerceOrderNotFound = No order with nopCommerce order id %s is recorded as completed
 NopCommerceNotEnoughRecordedToReverse = Product id %s has only %s left outstanding, the reversal asks for %s
 
+# Sales
+NopCommerceSalesMovementLabel = nopCommerce sale %s
+NopCommerceSalesProductNotFound = No product has the Dolibarr id %s
+
 # Completed order list
 NopCommerceCompletedOrders = Completed orders
 NopCommerceCompletedOrdersHint = Orders nopCommerce reported as completed. Their products were taken out of the webshop warehouse. Click an order to see them.
