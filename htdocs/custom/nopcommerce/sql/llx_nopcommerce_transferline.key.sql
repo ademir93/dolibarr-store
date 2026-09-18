@@ -1,0 +1,3 @@
+ALTER TABLE llx_nopcommerce_transferline ADD INDEX idx_nopcommerce_transferline_fk_transfer (fk_nopcommercetransfer);
+ALTER TABLE llx_nopcommerce_transferline ADD INDEX idx_nopcommerce_transferline_fk_product (fk_product);
+ALTER TABLE llx_nopcommerce_transferline ADD CONSTRAINT fk_nopcommerce_transferline_transfer FOREIGN KEY (fk_nopcommercetransfer) REFERENCES llx_nopcommerce_transfer (rowid);

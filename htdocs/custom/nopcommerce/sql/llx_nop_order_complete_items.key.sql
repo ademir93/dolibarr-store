@@ -1,0 +1,3 @@
+ALTER TABLE llx_nop_order_complete_items ADD INDEX idx_nop_order_complete_items_fk_order (fk_nop_order_completed);
+ALTER TABLE llx_nop_order_complete_items ADD INDEX idx_nop_order_complete_items_fk_product (fk_product);
+ALTER TABLE llx_nop_order_complete_items ADD CONSTRAINT fk_nop_order_complete_items_order FOREIGN KEY (fk_nop_order_completed) REFERENCES llx_nop_order_completed (rowid);

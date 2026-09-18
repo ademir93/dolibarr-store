@@ -1,0 +1,129 @@
+# Copyright (C) 2026 Demir Agovic
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+# Module
+ModuleNopCommerceName = nopCommerce integration
+ModuleNopCommerceDesc = Product synchronisation between Dolibarr and a nopCommerce webshop
+NopCommerceDescription = Product synchronisation with a nopCommerce webshop
+NopCommerceDescriptionLong = Transferring a product's stock from the source warehouse into the webshop warehouse queues it for the webshop. nopCommerce polls this module for the products that are waiting, records them on its side, then reports the result. The stock moves when the transfer is made, so confirming a product does not move it again.
+NopCommerceSetup = nopCommerce integration setup
+NopCommerceSetupPage = Setup of the nopCommerce integration
+NopCommerceAbout = About nopCommerce integration
+NopCommerceAboutPage = nopCommerce integration about page
+
+# Setup
+NopCommerceWebshopWarehouseId = Webshop warehouse
+NopCommerceWebshopWarehouseIdTooltip = The warehouse that holds the stock published on the nopCommerce webshop. A stock transfer into this warehouse from the source warehouse above queues the product for sync.
+NopCommerceSourceWarehouseId = Source warehouse
+NopCommerceSourceWarehouseIdTooltip = The warehouse stock is transferred from. A stock transfer is queued for nopCommerce only when it runs from this warehouse to the webshop warehouse below.
+NopCommerceAckRequireToken = Require the pull token on acknowledgement
+NopCommerceAckRequireTokenTooltip = When enabled, nopCommerce has to send back the pull_token it received with the transfer. This stops a stale acknowledgement from being applied. Disable it only while testing.
+NopCommercePullLimit = Default number of transfers per pull
+NopCommercePullLimitTooltip = Maximum number of transfers the pull endpoint returns when nopCommerce does not ask for a specific limit.
+NopCommerceAllowNegativeSourceStock = Allow the source warehouse to go negative
+NopCommerceAllowNegativeSourceStockTooltip = When disabled, an acknowledgement is refused if the source warehouse does not hold enough stock for a line, and nothing is moved.
+
+# Objects
+NopCommerceExternalId = External ID
+NopCommerceExternalIdTooltip = Identifier of this product on the nopCommerce webshop
+NopCommerceTransfer = nopCommerce transfer
+NopCommerceTransfers = nopCommerce transfers
+NopCommerceTransferLine = Transfer line
+NopCommerceTransferLines = Products of the transfer
+NopCommerceSourceWarehouse = Source warehouse
+NopCommerceWebshopWarehouse = Webshop warehouse
+NopCommerceSyncFlag = Synced with nopCommerce
+NopCommerceSyncTrue = Yes
+NopCommerceSyncFalse = No
+NopCommerceSyncAttempts = Acknowledgements received
+NopCommerceSyncLastError = Last error from nopCommerce
+NopCommercePullToken = Pull token
+NopCommerceDatePulled = Last pulled on
+NopCommerceDateSynced = Confirmed on
+NopCommerceProductId = nopCommerce product id
+NopCommerceCombinationId = nopCommerce combination id
+NopCommerceMovementSource = Source stock movement
+NopCommerceMovementDestination = Destination stock movement
+NopCommerceSyncProducts = Products for nopCommerce sync
+NopCommerceOrigin = Queued from
+NopCommerceOriginManual = Built by hand
+NopCommerceOriginNative = Stock transfer
+
+# Statuses
+NopCommerceStatusPending = Waiting for nopCommerce
+NopCommerceStatusSynced = Synced
+NopCommerceStatusFailed = Sync failed
+
+# Actions
+NopCommerceValidateTransfer = Validate
+NopCommerceConfirmValidateTransfer = Validate transfer %s? It becomes visible to nopCommerce. No stock moves until nopCommerce confirms it.
+NopCommerceCancelTransfer = Cancel
+NopCommerceConfirmCancelTransfer = Cancel transfer %s?
+NopCommerceDeleteTransfer = Delete
+NopCommerceConfirmDeleteTransfer = Delete transfer %s?
+NopCommerceDeleteLine = Delete line
+NopCommerceConfirmDeleteLine = Delete this line?
+
+# Messages
+NopCommerceMovementLabel = nopCommerce sync %s
+NopCommerceNotEnoughStock = Product id %s has only %s in the source warehouse, the transfer needs %s
+NopCommerceTransferValidated = Transfer validated, nopCommerce can now pull it
+NopCommerceTransferCanceled = Transfer canceled
+NopCommerceLineDeleted = Line deleted
+NopCommerceNoLineYet = No product on this transfer yet
+NopCommerceApiEndpoints = API endpoints for the nopCommerce plugin
+NopCommerceApiHint = Give the nopCommerce plugin a Dolibarr user whose API key is set and who holds the permission "Use the nopCommerce sync API".
+NopCommerceNoProductQueued = No product is queued for nopCommerce yet. Products are queued by transferring their stock into the webshop warehouse.
+
+# Errors
+BothWarehousesAreRequired = Both the source warehouse and the webshop warehouse are required
+SourceAndDestinationWarehousesMustDiffer = The source warehouse and the webshop warehouse have to be different
+OnlyADraftTransferCanBeModified = Only a draft transfer can be modified
+OnlyADraftTransferCanBeValidated = Only a draft transfer can be validated
+ATransferNeedsAtLeastOneLine = Add at least one product before validating
+QuantityMustBePositive = The quantity has to be greater than zero
+CannotDeleteASyncedTransfer = A transfer already confirmed by nopCommerce cannot be deleted
+CannotCancelASyncedTransfer = A transfer already confirmed by nopCommerce cannot be canceled
+FailedToBuildTheNextRef = Failed to build the next reference
+NopCommerceCaptureFailed = The product could not be queued for nopCommerce, so the stock transfer was not made: %s
+
+# Completed orders
+NopCommerceOrderMovementLabel = nopCommerce order %s
+NopCommerceWebshopWarehouseNotSet = The webshop warehouse is not set in the module setup
+NopCommerceNotEnoughStockInWebshop = Product id %s has only %s in the webshop warehouse, the order needs %s
+NopCommerceProductNotFound = No product has the nopCommerce external id %s
+NopCommerceProductAmbiguous = Several products have the nopCommerce external id %s
+NopCommerceVariantValueRequired = The product with nopCommerce external id %s has variants, so the attribute value is required
+NopCommerceVariantNotFound = The product with nopCommerce external id %s has no variant %s %s
+NopCommerceVariantAmbiguous = The product with nopCommerce external id %s has several variants matching %s %s
+
+# Order reversal
+NopCommerceOrderReversalMovementLabel = nopCommerce order %s reversal %s
+NopCommerceOrderNotFound = No order with nopCommerce order id %s is recorded as completed
+NopCommerceNotEnoughRecordedToReverse = Product id %s has only %s left outstanding, the reversal asks for %s
+
+# Sales
+NopCommerceSalesMovementLabel = nopCommerce sale %s
+NopCommerceSalesProductNotFound = No product has the Dolibarr id %s
+
+# Completed order list
+NopCommerceCompletedOrders = Completed orders
+NopCommerceCompletedOrdersHint = Orders nopCommerce reported as completed. Their products were taken out of the webshop warehouse. Click an order to see them.
+NopCommerceOrderId = nopCommerce order
+NopCommerceOrderProductCount = Products
+NopCommerceOrderProducts = Products of order %s
+NopCommerceShowOrderProducts = Show the products of this order
+NopCommerceNoCompletedOrderYet = No order has been reported as completed by nopCommerce yet
+NopCommerceNoProductOnThisOrder = No product was recorded on this order

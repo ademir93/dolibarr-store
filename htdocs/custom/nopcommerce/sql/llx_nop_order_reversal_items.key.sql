@@ -1,0 +1,3 @@
+ALTER TABLE llx_nop_order_reversal_items ADD INDEX idx_nop_order_reversal_items_fk_reversal (fk_nop_order_reversal);
+ALTER TABLE llx_nop_order_reversal_items ADD INDEX idx_nop_order_reversal_items_fk_product (fk_product);
+ALTER TABLE llx_nop_order_reversal_items ADD CONSTRAINT fk_nop_order_reversal_items_reversal FOREIGN KEY (fk_nop_order_reversal) REFERENCES llx_nop_order_reversal (rowid);
