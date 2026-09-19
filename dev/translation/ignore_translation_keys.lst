@@ -1060,3 +1060,47 @@ MyStoreRefundQtyToReturn
 MyStoreRefundTitle
 MyStoreRefundUnitPrice
 MyStoreSetupPage
+
+# htdocs/custom/nopcommerce/ (NopCommerce module): same cause as the
+# MyStore block above - keys are defined and correct in
+# htdocs/custom/nopcommerce/langs/*/*.lang, but that directory is outside
+# this script's LANG_DIR (htdocs/langs/en_US/), so they always report as
+# missing.
+NopCommerceAbout
+NopCommerceApiEndpoints
+NopCommerceApiHint
+NopCommerceCancelTransfer
+NopCommerceCaptureFailed
+NopCommerceCompletedOrders
+NopCommerceCompletedOrdersHint
+NopCommerceConfirmCancelTransfer
+NopCommerceConfirmDeleteTransfer
+NopCommerceDeleteTransfer
+NopCommerceDescriptionLong
+NopCommerceExternalId
+NopCommerceMovementLabel
+NopCommerceNoCompletedOrderYet
+NopCommerceNoProductOnThisOrder
+NopCommerceNoProductQueued
+NopCommerceNotEnoughRecordedToReverse
+NopCommerceNotEnoughStock
+NopCommerceNotEnoughStockInWebshop
+NopCommerceOrderMovementLabel
+NopCommerceOrderNotFound
+NopCommerceOrderProducts
+NopCommerceOrderReversalMovementLabel
+NopCommerceSalesMovementLabel
+NopCommerceSalesProductNotFound
+NopCommerceSetup
+NopCommerceShowOrderProducts
+NopCommerceStatusFailed
+NopCommerceStatusPending
+NopCommerceStatusSynced
+NopCommerceSyncFalse
+NopCommerceSyncProducts
+NopCommerceSyncTrue
+NopCommerceTransfer
+NopCommerceTransferCanceled
+NopCommerceTransfers
+NopCommerceVariantValueRequired
+NopCommerceWebshopWarehouseNotSet

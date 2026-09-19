@@ -162,3 +162,5 @@ print $langs->trans("Developpers").':';
 print_liste_field_titre("PeriodEndDate", $_SERVER["PHP_SELF"], "cs.periode", "", $param, '', $sortfield, $sortorder, 'center ');
 select#date_startday, select#date_startmonth, select#date_endday, select#date_endmonth, select#reday, select#remonth
 select#date_startday, select#date_startmonth, select#date_endday, select#date_endmonth, select#reday, select#remonth,
+Note that a missing `stock/mouvement/creer` right makes `product.php` skip the whole
+14. **No rights, no capture.** A user without `stock/mouvement/creer` cannot transfer at

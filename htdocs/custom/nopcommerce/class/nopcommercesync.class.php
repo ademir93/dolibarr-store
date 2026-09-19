@@ -1046,8 +1046,8 @@ class NopCommerceSync
 				$movementout = new MouvementStock($this->db);
 				$movementout->origin_type = NopCommerceTransfer::ORIGIN_TYPE;
 				$movementout->origin_id = $transfer->id;
-				$resultout = $movementout->livraison($user, $line->fk_product, $transfer->fk_warehouse_source, $line->qty, 0, $label, '', '', '', (string) $line->batch, 0, $inventorycode);
-				if ($resultout < 0) {
+				$resultdelivery = $movementout->livraison($user, $line->fk_product, $transfer->fk_warehouse_source, $line->qty, 0, $label, '', '', '', (string) $line->batch, 0, $inventorycode);
+				if ($resultdelivery < 0) {
 					$this->error = $movementout->error;
 					$this->errors = array_merge($this->errors, $movementout->errors);
 					$this->db->rollback();
@@ -1057,8 +1057,8 @@ class NopCommerceSync
 				$movementin = new MouvementStock($this->db);
 				$movementin->origin_type = NopCommerceTransfer::ORIGIN_TYPE;
 				$movementin->origin_id = $transfer->id;
-				$resultin = $movementin->reception($user, $line->fk_product, $transfer->fk_warehouse_destination, $line->qty, 0, $label, '', '', (string) $line->batch, '', 0, $inventorycode);
-				if ($resultin < 0) {
+				$resultreception = $movementin->reception($user, $line->fk_product, $transfer->fk_warehouse_destination, $line->qty, 0, $label, '', '', (string) $line->batch, '', 0, $inventorycode);
+				if ($resultreception < 0) {
 					$this->error = $movementin->error;
 					$this->errors = array_merge($this->errors, $movementin->errors);
 					$this->db->rollback();
