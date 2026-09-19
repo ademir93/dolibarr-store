@@ -98,7 +98,15 @@ jobs:
           > /tmp/phpstan-files.txt
           echo "$ALL_CHANGED_FILES" >> /tmp/phpstan-files.txt
           cat /tmp/phpstan-files.txt
-          phpstan -vvv analyse --error-format=checkstyle --memory-limit 7G -a dev/build/phpstan/bootstrap_action.php ${ALL_CHANGED_FILES} | tee _stan.xml | cs2pr --graceful-warnings
+          # Drop files in the directories that phpstan.neon.dist excludes (analyseAndScan).
+          # If only such files changed (e.g. a PR touching only htdocs/custom), phpstan aborts
+          # with "No files found to analyse" and cs2pr then fails on the empty output.
+          ANALYSABLE_FILES=$(echo "$ALL_CHANGED_FILES" | tr ' ' '\n' | grep -Ev '^htdocs/(custom|documents|install|langs)/|^htdocs/modulebuilder/template/test/' | tr '\n' ' ' || true)
+          if [ -z "${ANALYSABLE_FILES// /}" ]; then
+            echo "All changed PHP files are excluded by phpstan.neon.dist, nothing to analyse."
+            exit 0
+          fi
+          phpstan -vvv analyse --error-format=checkstyle --memory-limit 7G -a dev/build/phpstan/bootstrap_action.php ${ANALYSABLE_FILES} | tee _stan.xml | cs2pr --graceful-warnings
         # continue-on-error: true
 
       # Save cache
