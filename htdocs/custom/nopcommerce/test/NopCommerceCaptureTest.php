@@ -221,7 +221,7 @@ class NopCommerceCaptureTest extends CommonClassTest
 	 * transfer holding one line, with both stock movements recorded and tagged.
 	 *
 	 * This drives the real seam: it performs the same two stock corrections product.php
-	 * performs and lets Dolibarr's own trigger dispatch fire.
+	 * performs and allows Dolibarr's own trigger dispatch to fire.
 	 *
 	 * @return void
 	 */

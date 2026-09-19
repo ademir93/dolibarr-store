@@ -348,7 +348,7 @@ and writes an exit stock movement (inventory code `NOPSALE-<nop_order_item_id>`)
 row in `llx_nop_sales_line`.
 
 **Lines are independent of each other.** Unlike `order_completed`'s all-or-nothing order,
-one line failing (unknown product, not enough stock, unparseable `sold_at`) never rolls
+one line failing (unknown product, not enough stock, unparsable `sold_at`) never rolls
 back or blocks any other line of the same batch — each line is its own idempotency record
 and its own database transaction. A line that fails does **not** claim its
 `nop_order_item_id`, so a later retry of the same line (after the underlying problem is

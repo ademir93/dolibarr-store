@@ -61,7 +61,7 @@ class NopCommerce extends DolibarrApi
 	/**
 	 * Ping the sync endpoint
 	 *
-	 * Lets the nopCommerce plugin check its API key and its warehouse setup without
+	 * Allows the nopCommerce plugin check its API key and its warehouse setup without
 	 * changing anything.
 	 *
 	 * @return	array<string,mixed>		Server time, configured webshop warehouse and number of waiting transfers
