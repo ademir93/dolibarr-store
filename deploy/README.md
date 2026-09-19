@@ -42,8 +42,12 @@ the server into ghcr.io for each pull.
   DOLI_CRON_KEY=...
   DOLI_INSTANCE_UNIQUE_ID=... # encryption salt — set once, never change
   DOLI_COMPANY_NAME=...
-  DOLI_URL_ROOT=http://csbjeans.com:8080
+  DOLI_URL_ROOT=https://erp.csbjeans.com   # the URL browsers use, not the internal :8080 port
   ```
+
+  `DOLI_URL_ROOT` becomes `$dolibarr_main_url_root`, which Dolibarr uses to build
+  every absolute link. If it names the internal `host:8080` address, users
+  reached through the reverse proxy get sent to that address by those links.
 
 ## Things to know
 
