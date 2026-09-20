@@ -26,6 +26,7 @@ require_once DOL_DOCUMENT_ROOT.'/product/stock/class/entrepot.class.php';
 require_once DOL_DOCUMENT_ROOT.'/product/stock/class/mouvementstock.class.php';
 dol_include_once('/nopcommerce/class/nopcommercetransfer.class.php');
 dol_include_once('/nopcommerce/class/nopcommercetransferline.class.php');
+dol_include_once('/nopcommerce/lib/nopcommerce.lib.php');
 
 
 /**
@@ -188,7 +189,7 @@ class NopCommerceSync
 				'ref' => $destwarehouse->ref,
 				'label' => $destwarehouse->label,
 			),
-			'date_creation' => dol_print_date($transfer->date_creation, 'dayhourrfc'),
+			'date_creation' => nopcommerceIsoDate($transfer->date_creation),
 			'lines' => array(),
 		);
 
@@ -510,7 +511,7 @@ class NopCommerceSync
 	 * @param	User	$user			User the API call runs as
 	 * @param	int		$noporderid		Order id on the nopCommerce side, previously recorded as completed
 	 * @param	string	$reversalid		Id of this cancellation/refund/return on the nopCommerce side. Makes a replay idempotent
-	 * @param	array<int,array<string,mixed>>	$items	Items to reverse: productid, quantity. Empty to reverse everything still outstanding
+	 * @param	array<int,array<string,mixed>>	$items	Items to reverse: productid, quantity, and optionally attribute and attributeValue naming the size. Empty to reverse everything still outstanding
 	 * @return	int<-3,1>				1 if applied, 0 if this reversal was already recorded, -1 on a database or stock movement error, -2 if the order is not recorded as completed, -3 if an item asks for more than remains outstanding
 	 */
 	public function reverseOrder(User $user, $noporderid, $reversalid, array $items)
@@ -574,8 +575,10 @@ class NopCommerceSync
 			foreach ($items as $item) {
 				$nopproductid = (int) $item['productid'];
 				$qty = (int) $item['quantity'];
+				$attribute = isset($item['attribute']) ? trim((string) $item['attribute']) : '';
+				$attributevalue = isset($item['attributeValue']) ? trim((string) $item['attributeValue']) : '';
 
-				$applied = $this->planItemReversal($completedid, $nopproductid, $qty, $plan);
+				$applied = $this->planItemReversal($completedid, $nopproductid, $qty, $plan, $attribute, $attributevalue);
 				if ($applied < 0) {
 					$this->db->rollback();
 					return $applied;
@@ -679,20 +682,30 @@ class NopCommerceSync
 	 * (`nop_external_id`), the same value the request carries, so no catalog lookup is
 	 * needed: the product was already resolved once, when the order was completed.
 	 *
+	 * A product id alone does not say which size came back when the order recorded several
+	 * variants of the product. The item then has to name the size (attributeValue, and
+	 * optionally the attribute name to tell apart variants sharing a value), and only the
+	 * rows of the variant carrying it are credited. Without a size, an order that recorded a
+	 * single variant of the product is credited as before, and an order that recorded
+	 * several is refused rather than guessed.
+	 *
 	 * @param	int							$completedid	Row id of llx_nop_order_completed
 	 * @param	int							$nopproductid	Product id on the nopCommerce side
 	 * @param	int							$qtyneeded		Quantity to reverse for this item
 	 * @param	array<int,array<string,mixed>>	$plan		Plan being built, keyed by item row id. Modified in place
-	 * @return	int<-3,0>									0 on success, -1 on a database error, -3 if not enough remains outstanding
+	 * @param	string						$attribute		Attribute name of the size, for example Size. May be empty
+	 * @param	string						$attributevalue	Size value, for example M. Empty when the request does not say
+	 * @return	int<-3,0>									0 on success, -1 on a database error, -3 if the size is needed, matches nothing recorded, or the item asks for more than remains outstanding
 	 */
-	private function planItemReversal($completedid, $nopproductid, $qtyneeded, array &$plan)
+	private function planItemReversal($completedid, $nopproductid, $qtyneeded, array &$plan, $attribute = '', $attributevalue = '')
 	{
 		global $langs;
 
+		// Every row the order recorded for the product, outstanding or not: which variants were
+		// recorded decides whether a size is needed.
 		$sql = "SELECT rowid, fk_product, nop_external_id, qty, qty_reversed FROM ".$this->db->prefix()."nop_order_complete_items";
 		$sql .= " WHERE fk_nop_order_completed = ".((int) $completedid);
 		$sql .= " AND nop_external_id = ".((int) $nopproductid);
-		$sql .= " AND qty > qty_reversed";
 		$sql .= " ORDER BY rowid ASC";
 		$sql .= " FOR UPDATE";
 
@@ -703,8 +716,40 @@ class NopCommerceSync
 			return -1;
 		}
 
+		$rows = array();
+		$variantids = array();
+		while ($obj = $this->db->fetch_object($resql)) {
+			$rows[] = $obj;
+			$variantids[(int) $obj->fk_product] = (int) $obj->fk_product;
+		}
+
+		if ($attributevalue !== '') {
+			$candidates = $this->findRecordedVariantsBySize(array_values($variantids), $attribute, $attributevalue);
+			if (count($candidates) == 0) {
+				$this->error = $langs->transnoentitiesnoconv('NopCommerceReversalSizeNotRecorded', trim($attribute.' '.$attributevalue), $nopproductid);
+				$this->errors[] = $this->error;
+				return -3;
+			}
+			if (count($candidates) > 1) {
+				$this->error = $langs->transnoentitiesnoconv('NopCommerceReversalSizeAmbiguous', $nopproductid, trim($attribute.' '.$attributevalue));
+				$this->errors[] = $this->error;
+				return -3;
+			}
+			$keep = $candidates[0];
+			$rows = array_values(array_filter($rows, function ($obj) use ($keep) {
+				return (int) $obj->fk_product == $keep;
+			}));
+		} elseif (count($variantids) > 1) {
+			$this->error = $langs->transnoentitiesnoconv('NopCommerceReversalSizeRequired', $nopproductid);
+			$this->errors[] = $this->error;
+			return -3;
+		}
+
 		$remainingneeded = $qtyneeded;
-		while ($remainingneeded > 0 && ($obj = $this->db->fetch_object($resql))) {
+		foreach ($rows as $obj) {
+			if ($remainingneeded <= 0) {
+				break;
+			}
 			$rowid = (int) $obj->rowid;
 			$alreadyplanned = isset($plan[$rowid]) ? $plan[$rowid]['qty'] : 0;
 			$available = ((int) $obj->qty) - ((int) $obj->qty_reversed) - $alreadyplanned;
@@ -732,6 +777,50 @@ class NopCommerceSync
 		}
 
 		return 0;
+	}
+
+	/**
+	 * Pick, among the variants an order recorded, the ones carrying a size.
+	 *
+	 * Same rules as when the order was completed: the value is matched case-insensitively on
+	 * the value reference or label, and the attribute name only chooses between several
+	 * variants carrying that value. A recorded product that is not a variant has no size to
+	 * contradict, so it matches whatever size is sent.
+	 *
+	 * @param	int[]	$variantids		Product ids the order recorded for one nopCommerce product
+	 * @param	string	$attribute		Attribute name of the size. May be empty
+	 * @param	string	$attributevalue	Size value
+	 * @return	int[]					Ids of the matching variants
+	 */
+	private function findRecordedVariantsBySize(array $variantids, $attribute, $attributevalue)
+	{
+		$matchingvalue = array();
+		$matchingattribute = array();
+
+		foreach ($variantids as $fkproduct) {
+			$attributes = $this->getVariantAttributes($fkproduct);
+			if (empty($attributes)) {
+				$matchingvalue[$fkproduct] = true;
+				$matchingattribute[$fkproduct] = true;
+				continue;
+			}
+			foreach ($attributes as $variantattribute) {
+				if (!$this->sameText($variantattribute['value_ref'], $attributevalue) && !$this->sameText($variantattribute['value_label'], $attributevalue)) {
+					continue;
+				}
+				$matchingvalue[$fkproduct] = true;
+				if ($this->sameText($variantattribute['attribute_ref'], $attribute) || $this->sameText($variantattribute['attribute_label'], $attribute)) {
+					$matchingattribute[$fkproduct] = true;
+				}
+			}
+		}
+
+		$candidates = array_keys($matchingvalue);
+		if (count($candidates) > 1 && count($matchingattribute) > 0) {
+			$candidates = array_keys($matchingattribute);
+		}
+
+		return $candidates;
 	}
 
 	/**
@@ -882,123 +971,6 @@ class NopCommerceSync
 		}
 
 		return mb_strtolower(trim((string) $stored), 'UTF-8') === mb_strtolower($sent, 'UTF-8');
-	}
-
-	/**
-	 * Apply one sold line reported through /sales.
-	 *
-	 * Unlike syncProduct(), dolibarr_product_id is already a Dolibarr id, so there is no
-	 * catalog lookup. The line is idempotent on nop_order_item_id: a line already recorded
-	 * is not applied again and answers already_applied without touching the stock. Unlike
-	 * a whole order reported to /order_completed, one line's failure never rolls back or
-	 * blocks any other line of the same batch, since each line is its own idempotency
-	 * record and its own database transaction.
-	 *
-	 * @param	User	$user				User the API call runs as
-	 * @param	int		$noporderitemid		nopCommerce order item id, the idempotency key
-	 * @param	int		$dolibarrproductid	Dolibarr product/variant id sold
-	 * @param	int		$qty				Quantity sold
-	 * @param	int		$soldattimestamp	Sale timestamp, as a unix timestamp
-	 * @return	array{status:string,error:?string}	status is one of applied, already_applied, failed
-	 */
-	public function applySalesLine(User $user, $noporderitemid, $dolibarrproductid, $qty, $soldattimestamp)
-	{
-		global $langs;
-
-		$langs->loadLangs(array('nopcommerce@nopcommerce'));
-
-		$existing = $this->fetchSalesLineId($noporderitemid);
-		if ($existing < 0) {
-			return array('status' => 'failed', 'error' => $this->error);
-		}
-		if ($existing > 0) {
-			return array('status' => 'already_applied', 'error' => null);
-		}
-
-		$warehouseid = getDolGlobalInt('NOPCOMMERCE_WEBSHOP_WAREHOUSE_ID');
-		if ($warehouseid <= 0) {
-			return array('status' => 'failed', 'error' => $langs->transnoentitiesnoconv('NopCommerceWebshopWarehouseNotSet'));
-		}
-
-		$product = new Product($this->db);
-		if ($product->fetch((int) $dolibarrproductid) <= 0) {
-			return array('status' => 'failed', 'error' => $langs->transnoentitiesnoconv('NopCommerceSalesProductNotFound', $dolibarrproductid));
-		}
-
-		$allownegative = getDolGlobalInt('NOPCOMMERCE_ALLOW_NEGATIVE_SOURCE_STOCK');
-		$label = $langs->transnoentitiesnoconv('NopCommerceSalesMovementLabel', $noporderitemid);
-		$inventorycode = 'NOPSALE-'.((int) $noporderitemid);
-		$now = dol_now();
-
-		$this->db->begin();
-
-		// The line row goes in first, exactly like syncProduct() does for the order row: its
-		// unique key on nop_order_item_id makes a concurrent replay of the same line wait
-		// here and then find itself already applied, instead of taking the stock out twice.
-		$sql = "INSERT INTO ".$this->db->prefix()."nop_sales_line (nop_order_item_id, fk_product, qty, sold_at, date_creation)";
-		$sql .= " VALUES (".((int) $noporderitemid).", ".((int) $dolibarrproductid).", ".((int) $qty).", '".$this->db->idate($soldattimestamp)."', '".$this->db->idate($now)."')";
-
-		if (!$this->db->query($sql)) {
-			$alreadyexists = ($this->db->lasterrno() == 'DB_ERROR_RECORD_ALREADY_EXISTS');
-			$error = $this->db->lasterror();
-			$this->db->rollback();
-			if ($alreadyexists) {
-				return array('status' => 'already_applied', 'error' => null);
-			}
-			return array('status' => 'failed', 'error' => $error);
-		}
-		$lineid = (int) $this->db->last_insert_id($this->db->prefix()."nop_sales_line");
-
-		if (!$allownegative) {
-			$available = $this->getStockInWarehouse($dolibarrproductid, $warehouseid, true);
-			if ($available < $qty) {
-				$this->db->rollback();
-				return array('status' => 'failed', 'error' => $langs->transnoentitiesnoconv('NopCommerceNotEnoughStockInWebshop', $dolibarrproductid, $available, $qty));
-			}
-		}
-
-		$movement = new MouvementStock($this->db);
-		$movementid = $movement->livraison($user, (int) $dolibarrproductid, $warehouseid, (int) $qty, 0, $label, '', '', '', '', 0, $inventorycode);
-		if ($movementid < 0) {
-			$error = $movement->error;
-			$this->db->rollback();
-			return array('status' => 'failed', 'error' => $error);
-		}
-
-		$sqlupd = "UPDATE ".$this->db->prefix()."nop_sales_line SET fk_mouvement = ".((int) $movementid);
-		$sqlupd .= " WHERE rowid = ".$lineid;
-
-		if (!$this->db->query($sqlupd)) {
-			$error = $this->db->lasterror();
-			$this->db->rollback();
-			return array('status' => 'failed', 'error' => $error);
-		}
-
-		$this->db->commit();
-
-		return array('status' => 'applied', 'error' => null);
-	}
-
-	/**
-	 * Return the row id of a sales line already recorded.
-	 *
-	 * @param	int		$noporderitemid		nopCommerce order item id
-	 * @return	int							Row id of llx_nop_sales_line, 0 if not recorded, -1 on error
-	 */
-	public function fetchSalesLineId($noporderitemid)
-	{
-		$sql = "SELECT rowid FROM ".$this->db->prefix()."nop_sales_line";
-		$sql .= " WHERE nop_order_item_id = ".((int) $noporderitemid);
-
-		$resql = $this->db->query($sql);
-		if (!$resql) {
-			$this->error = $this->db->lasterror();
-			$this->errors[] = $this->error;
-			return -1;
-		}
-		$obj = $this->db->fetch_object($resql);
-
-		return $obj ? (int) $obj->rowid : 0;
 	}
 
 	/**

@@ -70,7 +70,7 @@ class modNopCommerce extends DolibarrModules
 		$this->editor_url = '';
 
 		// Possible values: 'development', 'experimental', 'dolibarr', or a version string like 'x.y.z'
-		$this->version = '1.0';
+		$this->version = '1.1';
 
 		// Key used in llx_const table to save module status enabled/disabled
 		$this->const_name = 'MAIN_MODULE_'.strtoupper($this->name);
@@ -217,28 +217,9 @@ class modNopCommerce extends DolibarrModules
 
 		// Product identifier on the nopCommerce side, added as an extrafield so the
 		// product create/edit page shows and saves it without touching core files.
-		include_once DOL_DOCUMENT_ROOT.'/core/class/extrafields.class.php';
-		$extrafields = new ExtraFields($this->db);
-		$extrafields->addExtraField(
-			'nopcommerce_external_id',
-			'NopCommerceExternalId',
-			'int',
-			1,
-			'11',
-			'product',
-			0,
-			0,
-			'',
-			'',
-			1,
-			'',
-			1,
-			'NopCommerceExternalIdTooltip',
-			'',
-			'',
-			'nopcommerce@nopcommerce',
-			'1'
-		);
+		dol_include_once('/nopcommerce/class/nopcommerceschema.class.php');
+		$schema = new NopCommerceSchema($this->db);
+		$schema->ensureExternalIdExtrafield();
 
 		$sql = array();
 

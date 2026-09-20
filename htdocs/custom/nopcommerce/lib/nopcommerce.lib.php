@@ -69,3 +69,22 @@ function nopcommerceApiBaseUrl()
 
 	return rtrim($root, '/').'/api/index.php/nopcommerce';
 }
+
+/**
+ * Format a timestamp the way the nopCommerce contract wants every date: ISO-8601, in UTC, with
+ * a numeric offset rather than a Z suffix.
+ *
+ * Built from the UTC clock on purpose: Dolibarr's own RFC 3339 format prints the user's local
+ * time and labels it Z.
+ *
+ * @param	int|string|null	$timestamp	Unix timestamp
+ * @return	string|null					Date such as 2026-09-13T10:04:00+00:00, null when there is no timestamp
+ */
+function nopcommerceIsoDate($timestamp)
+{
+	if (empty($timestamp)) {
+		return null;
+	}
+
+	return gmdate('Y-m-d\TH:i:s', (int) $timestamp).'+00:00';
+}
