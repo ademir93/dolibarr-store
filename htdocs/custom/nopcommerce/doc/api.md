@@ -193,7 +193,7 @@ Request body:
 | `pull_token` | yes, unless the setup disables the check | The token that came with the transfer in the pull |
 | `success` | yes | `true` when nopCommerce recorded the whole transfer |
 | `error` | on failure | Message stored in `sync_last_error` and shown on the transfer card |
-| `lines` | no | Per line detail. `nop_product_id` and `nop_combination_id` are stored on the Dolibarr line so the two sides stay mapped |
+| `lines` | no | Per line detail. `nop_product_id` and `nop_combination_id` are stored on the Dolibarr line, and on success `nop_product_id` also sets the product extrafield `nopcommerce_external_id` (see Product resolution) |
 
 On `success: true` Dolibarr, inside a single database transaction:
 
@@ -333,10 +333,12 @@ form and redelivered in the other is recognised.
 ## Product resolution
 
 `order_completed` and `order_reversal` both act on a **nopCommerce** product id. Resolving it back
-to a Dolibarr product relies entirely on the `nopcommerce_external_id` product extrafield being
-set. There is no automatic path from an acknowledgement's `nop_product_id` (stored on
-`llx_nopcommerce_transferline`) into that extrafield. Seed it by hand, by import or by SKU, and
-use the readiness report on the setup page to find the products that still lack it.
+to a Dolibarr product relies on the `nopcommerce_external_id` product extrafield. A successful
+acknowledgement sets it: each line's `nop_product_id` is written on the line's parent product, or
+on the product itself when it has no variants. Any other product still holding that id loses it,
+so a webshop product deleted and pulled again moves its link to the new id, and an order never
+matches two products. A product that never came through a transfer has no link; the readiness
+report on the setup page lists the products that still lack it.
 
 ## Reversing a completed order: `POST /order_reversal`
 
