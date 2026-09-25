@@ -58,6 +58,8 @@ require_once DOL_DOCUMENT_ROOT."/core/lib/admin.lib.php";
 require_once DOL_DOCUMENT_ROOT."/product/stock/class/entrepot.class.php";
 require_once DOL_DOCUMENT_ROOT."/product/class/html.formproduct.class.php";
 require_once '../lib/nopcommerce.lib.php';
+require_once '../class/nopcommerceschema.class.php';
+require_once '../class/nopcommercereadiness.class.php';
 
 /**
  * @var Conf $conf
@@ -119,6 +121,20 @@ if ($action == 'update') {
 	} else {
 		$db->rollback();
 		setEventMessages($langs->trans("Error"), null, 'errors');
+	}
+
+	header("Location: ".$_SERVER["PHP_SELF"]);
+	exit;
+}
+
+
+if ($action == 'repairschema') {
+	$schema = new NopCommerceSchema($db);
+
+	if ($schema->repair() > 0) {
+		setEventMessages($langs->trans("NopCommerceSchemaRepaired"), null, 'mesgs');
+	} else {
+		setEventMessages($langs->trans("NopCommerceSchemaRepairFailed", $schema->error), null, 'errors');
 	}
 
 	header("Location: ".$_SERVER["PHP_SELF"]);
@@ -191,7 +207,6 @@ $endpoints = array(
 		$apibase.'/transfers/{id}/ack',
 		$apibase.'/order_completed',
 		$apibase.'/order_reversal',
-		$apibase.'/sales',
 	),
 );
 foreach ($endpoints as $method => $urls) {
@@ -200,6 +215,73 @@ foreach ($endpoints as $method => $urls) {
 	}
 }
 print '</table>';
+
+// Schema health: the tables and extrafield the order flow needs.
+$schema = new NopCommerceSchema($db);
+$health = $schema->check();
+
+print '<br>';
+print load_fiche_titre($langs->trans("NopCommerceSchema"), '', '');
+print '<div class="opacitymedium justify">'.$langs->trans("NopCommerceSchemaHint").'</div><br>';
+if ($health['ok']) {
+	print '<div class="ok">'.$langs->trans("NopCommerceSchemaOk").'</div>';
+} else {
+	print '<div class="error">'.$langs->trans("NopCommerceSchemaMissing").'</div>';
+	print '<ul>';
+	foreach ($health['missing'] as $item) {
+		print '<li><code>'.dol_escape_htmltag($item).'</code></li>';
+	}
+	print '</ul>';
+}
+print '<form method="POST" action="'.$_SERVER["PHP_SELF"].'">';
+print '<input type="hidden" name="token" value="'.newToken().'">';
+print '<input type="hidden" name="action" value="repairschema">';
+print '<div class="center"><input type="submit" class="button" value="'.dol_escape_htmltag($langs->trans("NopCommerceRepairSchema")).'"></div>';
+print '</form>';
+
+// Readiness report: what would make a webshop sale fail to resolve. Read only.
+$readiness = new NopCommerceReadiness($db);
+$report = $readiness->report(200);
+
+print '<br>';
+print load_fiche_titre($langs->trans("NopCommerceReadiness"), '', '');
+print '<div class="opacitymedium justify">'.$langs->trans("NopCommerceReadinessHint").'</div><br>';
+
+if ($report === false) {
+	print '<div class="error">'.dol_escape_htmltag($readiness->error).'</div>';
+} elseif ($report['warehouse_id'] <= 0) {
+	print '<div class="warning">'.$langs->trans("NopCommerceReadinessNoWarehouse").'</div>';
+} else {
+	$sections = array(
+		'unmapped_with_stock' => array('NopCommerceReadinessUnmapped', array('ref' => 'Ref', 'label' => 'Label', 'stock' => 'Stock')),
+		'shared_external_ids' => array('NopCommerceReadinessSharedIds', array('external_id' => 'NopCommerceExternalId', 'products' => 'NopCommerceColumnProducts', 'refs' => 'Ref')),
+		'shared_variant_values' => array('NopCommerceReadinessSharedValues', array('ref' => 'Ref', 'attribute' => 'NopCommerceColumnAttribute', 'value' => 'Value', 'variants' => 'NopCommerceColumnVariants')),
+		'mapped_without_stock' => array('NopCommerceReadinessNoStock', array('ref' => 'Ref', 'label' => 'Label', 'external_id' => 'NopCommerceExternalId')),
+	);
+	foreach ($sections as $key => $section) {
+		$rows = $report[$key];
+
+		print '<div class="titre inline-block">'.$langs->trans($section[0]).' ('.count($rows).')</div>';
+		if (empty($rows)) {
+			print '<div class="opacitymedium">'.$langs->trans("None").'</div><br>';
+			continue;
+		}
+		print '<table class="noborder centpercent">';
+		print '<tr class="liste_titre">';
+		foreach ($section[1] as $column => $title) {
+			print '<td>'.$langs->trans($title).'</td>';
+		}
+		print '</tr>';
+		foreach ($rows as $row) {
+			print '<tr class="oddeven">';
+			foreach ($section[1] as $column => $title) {
+				print '<td>'.dol_escape_htmltag((string) $row[$column]).'</td>';
+			}
+			print '</tr>';
+		}
+		print '</table><br>';
+	}
+}
 
 print dol_get_fiche_end();
 

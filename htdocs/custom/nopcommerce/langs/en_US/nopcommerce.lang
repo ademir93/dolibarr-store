@@ -84,6 +84,23 @@ NopCommerceTransferCanceled = Transfer canceled
 NopCommerceLineDeleted = Line deleted
 NopCommerceNoLineYet = No product on this transfer yet
 NopCommerceApiEndpoints = API endpoints for the nopCommerce plugin
+NopCommerceSchema = Database schema
+NopCommerceSchemaHint = The order and reversal endpoints need these tables and the product extrafield. Dolibarr only creates them when the module is enabled, so an instance that enabled the module earlier can lack the newer ones. Repairing runs the module table definitions again: it only adds what is missing and never removes data.
+NopCommerceSchemaOk = The schema is complete.
+NopCommerceSchemaMissing = The schema is incomplete. Missing:
+NopCommerceRepairSchema = Repair the schema
+NopCommerceSchemaRepaired = The schema was completed.
+NopCommerceSchemaRepairFailed = The schema could not be completed: %s
+NopCommerceReadiness = Readiness for webshop sales
+NopCommerceReadinessHint = Read only. A sale reaches Dolibarr as a nopCommerce product id and a size, and is applied only when it resolves to one product or variant holding enough stock in the webshop warehouse. These lists show where that is unlikely to hold. Values shared by variants are listed under their attribute: only a shared size is a problem, a shared colour is not.
+NopCommerceReadinessNoWarehouse = The webshop warehouse is not set above, so the report cannot be built.
+NopCommerceReadinessUnmapped = Products with stock in the webshop warehouse and no nopCommerce id
+NopCommerceReadinessSharedIds = nopCommerce ids carried by several products
+NopCommerceReadinessSharedValues = Values carried by several variants of one product
+NopCommerceReadinessNoStock = Sellable products with a nopCommerce id and no stock in the webshop warehouse
+NopCommerceColumnProducts = Products
+NopCommerceColumnAttribute = Attribute
+NopCommerceColumnVariants = Variants
 NopCommerceApiHint = Give the nopCommerce plugin a Dolibarr user whose API key is set and who holds the permission "Use the nopCommerce sync API".
 NopCommerceNoProductQueued = No product is queued for nopCommerce yet. Products are queued by transferring their stock into the webshop warehouse.
 
@@ -102,7 +119,7 @@ NopCommerceCaptureFailed = The product could not be queued for nopCommerce, so t
 # Completed orders
 NopCommerceOrderMovementLabel = nopCommerce order %s
 NopCommerceWebshopWarehouseNotSet = The webshop warehouse is not set in the module setup
-NopCommerceNotEnoughStockInWebshop = Product id %s has only %s in the webshop warehouse, the order needs %s
+NopCommerceNotEnoughStockInWebshop = Not enough stock in the webshop warehouse: product id %s has only %s, the order needs %s
 NopCommerceProductNotFound = No product has the nopCommerce external id %s
 NopCommerceProductAmbiguous = Several products have the nopCommerce external id %s
 NopCommerceVariantValueRequired = The product with nopCommerce external id %s has variants, so the attribute value is required
@@ -113,10 +130,9 @@ NopCommerceVariantAmbiguous = The product with nopCommerce external id %s has se
 NopCommerceOrderReversalMovementLabel = nopCommerce order %s reversal %s
 NopCommerceOrderNotFound = No order with nopCommerce order id %s is recorded as completed
 NopCommerceNotEnoughRecordedToReverse = Product id %s has only %s left outstanding, the reversal asks for %s
-
-# Sales
-NopCommerceSalesMovementLabel = nopCommerce sale %s
-NopCommerceSalesProductNotFound = No product has the Dolibarr id %s
+NopCommerceReversalSizeRequired = The order recorded several variants of nopCommerce product id %s, so the reversal has to say which size to put back (attributeValue)
+NopCommerceReversalSizeNotRecorded = The order recorded no variant %s for nopCommerce product id %s, so there is nothing to put back
+NopCommerceReversalSizeAmbiguous = Several variants the order recorded for nopCommerce product id %s match %s, so the reversal cannot tell which one to put back
 
 # Completed order list
 NopCommerceCompletedOrders = Completed orders
