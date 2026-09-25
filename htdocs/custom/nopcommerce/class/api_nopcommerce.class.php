@@ -200,7 +200,9 @@ class NopCommerce extends DolibarrApi
 	 *
 	 * On success Dolibarr moves the stock of every line out of the source warehouse and
 	 * into the webshop warehouse, then sets the sync flag of the transfer and of each of
-	 * its lines to true. On failure nothing is moved, the flag stays false, the error is
+	 * its lines to true. It also stores each line's nop_product_id in the product extrafield
+	 * nopcommerce_external_id, so the orders of that product are matched later. On failure
+	 * nothing is moved, the flag stays false, the error is
 	 * stored and the transfer is returned by the next pull.
 	 *
 	 * Body:

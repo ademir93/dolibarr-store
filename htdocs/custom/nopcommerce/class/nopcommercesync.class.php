@@ -24,6 +24,7 @@
 require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
 require_once DOL_DOCUMENT_ROOT.'/product/stock/class/entrepot.class.php';
 require_once DOL_DOCUMENT_ROOT.'/product/stock/class/mouvementstock.class.php';
+require_once dirname(__FILE__).'/nopcommerceschema.class.php';
 dol_include_once('/nopcommerce/class/nopcommercetransfer.class.php');
 dol_include_once('/nopcommerce/class/nopcommercetransferline.class.php');
 dol_include_once('/nopcommerce/lib/nopcommerce.lib.php');
@@ -1060,6 +1061,14 @@ class NopCommerceSync
 				$this->db->rollback();
 				return -1;
 			}
+
+			if (!empty($line->nop_product_id)) {
+				$linkedproductid = !empty($line->fk_product_parent) ? (int) $line->fk_product_parent : (int) $line->fk_product;
+				if ($this->linkExternalId($linkedproductid, (int) $line->nop_product_id) < 0) {
+					$this->db->rollback();
+					return -1;
+				}
+			}
 		}
 
 		$sql = "UPDATE ".$this->db->prefix()."nopcommerce_transfer";
@@ -1095,6 +1104,58 @@ class NopCommerceSync
 		}
 
 		$this->db->commit();
+
+		return 1;
+	}
+
+	/**
+	 * Store the nopCommerce product id in the extrafield nopcommerce_external_id, so the
+	 * orders of that product can be matched later (see resolveOrderLineProduct).
+	 *
+	 * The id goes on the parent when the transferred line is a variant, because nopCommerce
+	 * holds one product per parent, with one combination per variant. Any other product still
+	 * holding the same id, for example after the webshop product was deleted and pulled again,
+	 * loses it, so an order can never match two products. The product's own variants keep it.
+	 *
+	 * @param	int		$productid		Id of the Dolibarr product to link
+	 * @param	int		$nopproductid	Product id on the nopCommerce side
+	 * @return	int<-1,1>				Return integer <0 if KO, >0 if OK
+	 */
+	public function linkExternalId($productid, $nopproductid)
+	{
+		$field = NopCommerceSchema::EXTERNAL_ID_EXTRAFIELD;
+
+		$sql = "UPDATE ".$this->db->prefix()."product_extrafields SET ".$field." = NULL";
+		$sql .= " WHERE ".$field." = ".((int) $nopproductid);
+		$sql .= " AND fk_object <> ".((int) $productid);
+		$sql .= " AND fk_object NOT IN (SELECT fk_product_child FROM ".$this->db->prefix()."product_attribute_combination";
+		$sql .= " WHERE fk_product_parent = ".((int) $productid).")";
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		$sql = "SELECT rowid FROM ".$this->db->prefix()."product_extrafields WHERE fk_object = ".((int) $productid);
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
+
+		if ($this->db->num_rows($resql) > 0) {
+			$sql = "UPDATE ".$this->db->prefix()."product_extrafields SET ".$field." = ".((int) $nopproductid);
+			$sql .= " WHERE fk_object = ".((int) $productid);
+		} else {
+			$sql = "INSERT INTO ".$this->db->prefix()."product_extrafields (fk_object, ".$field.")";
+			$sql .= " VALUES (".((int) $productid).", ".((int) $nopproductid).")";
+		}
+		if (!$this->db->query($sql)) {
+			$this->error = $this->db->lasterror();
+			$this->errors[] = $this->error;
+			return -1;
+		}
 
 		return 1;
 	}
